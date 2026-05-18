@@ -80,6 +80,13 @@ public partial class AnnotationViewModel : ViewModelBase
     {
         _ocrEngine = ocrEngine;
         _exportService = new AnnotationExportService();
+
+        // 监听集合变化，刷新上一张/下一张按钮的可用状态
+        AllAnnotations.CollectionChanged += (_, _) =>
+        {
+            NextImageCommand.NotifyCanExecuteChanged();
+            PrevImageCommand.NotifyCanExecuteChanged();
+        };
     }
 
     // ─── 图片加载 ─────────────────────────────────────────────
