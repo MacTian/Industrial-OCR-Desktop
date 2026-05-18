@@ -163,10 +163,18 @@
                         <WrapPanel Margin="0,0,0,8">
                             <CheckBox Content="下载预训练模型" IsChecked="{Binding ConfigureDownloadPretrained}"
                                       Margin="0,0,16,4" VerticalAlignment="Center"/>
-                            <CheckBox Content="安装 PaddlePaddle" IsChecked="{Binding ConfigureInstallPaddle}"
-                                      Margin="0,0,16,4" VerticalAlignment="Center"/>
                             <CheckBox Content="安装依赖 (requirements.txt)" IsChecked="{Binding ConfigureInstallDeps}"
                                       Margin="0,0,16,4" VerticalAlignment="Center"/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,0,0,8">
+                            <CheckBox Content="安装 PaddlePaddle" IsChecked="{Binding ConfigureInstallPaddle}"
+                                      Margin="0,0,8,4" VerticalAlignment="Center"/>
+                            <RadioButton Content="CPU 版本" IsChecked="{Binding ConfigurePaddleCpu}"
+                                         Margin="0,0,12,4" VerticalAlignment="Center"
+                                         IsEnabled="{Binding ConfigureInstallPaddle}"/>
+                            <RadioButton Content="GPU 版本" IsChecked="{Binding ConfigurePaddleCpu, Converter={StaticResource BoolInvert}}"
+                                         Margin="0,0,12,4" VerticalAlignment="Center"
+                                         IsEnabled="{Binding ConfigureInstallPaddle}"/>
                         </WrapPanel>
                         <Button Content="🚀 开始自动配置" Command="{Binding AutoConfigureCommand}"
                                 HorizontalAlignment="Left" Padding="16,4" Margin="0,0,0,8"

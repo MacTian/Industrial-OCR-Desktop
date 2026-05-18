@@ -304,6 +304,7 @@ public class TrainingService
         bool downloadPretrained,
         bool installDeps,
         bool installPaddle,
+        bool paddleCpu,
         IProgress<(string Step, string Detail, bool IsError)>? progress = null)
     {
         var log = new System.Text.StringBuilder();
@@ -434,11 +435,13 @@ public class TrainingService
                     }
                     else
                     {
-                        Report("3/6", "安装 PaddlePaddle (CPU 版本)...");
+                        var pkg = paddleCpu ? "paddlepaddle" : "paddlepaddle-gpu";
+                        var label = paddleCpu ? "CPU" : "GPU";
+                        Report("3/6", $"安装 PaddlePaddle ({label} 版本)...");
                         var pipPsi = new ProcessStartInfo
                         {
                             FileName = pythonExe,
-                            Arguments = "-m pip install paddlepaddle -i https://mirrors.aliyun.com/pypi/simple/",
+                            Arguments = $"-m pip install {pkg} -i https://mirrors.aliyun.com/pypi/simple/",
                             RedirectStandardOutput = true,
                             RedirectStandardError = true,
                             UseShellExecute = false,
@@ -447,9 +450,20 @@ public class TrainingService
                         using var pipProc = Process.Start(pipPsi);
                         if (pipProc != null)
                         {
+                            // 异步读取输出
+                            var outputTask = Task.Run(async () =>
+                            {
+                                while (!pipProc.StandardOutput.EndOfStream)
+                                {
+                                    var line = await pipProc.StandardOutput.ReadLineAsync();
+                                    if (!string.IsNullOrWhiteSpace(line))
+                                        Report("3/6", $"  {line}");
+                                }
+                            });
                             await pipProc.WaitForExitAsync();
+                            await outputTask;
                             Report("3/6", pipProc.ExitCode == 0
-                                ? "✓ PaddlePaddle 安装成功"
+                                ? $"✓ PaddlePaddle ({label}) 安装成功"
                                 : $"✗ 安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
                         }
                     }

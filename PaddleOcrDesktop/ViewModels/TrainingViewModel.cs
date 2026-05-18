@@ -51,6 +51,12 @@ public partial class TrainingViewModel : ViewModelBase
     [ObservableProperty]
     private bool _configureInstallPaddle = true;
 
+    /// <summary>
+    /// PaddlePaddle 安装版本：true=CPU, false=GPU
+    /// </summary>
+    [ObservableProperty]
+    private bool _configurePaddleCpu = true;
+
     public TrainingViewModel()
     {
         _trainingService = new TrainingService();
@@ -197,6 +203,7 @@ public partial class TrainingViewModel : ViewModelBase
                 ConfigureDownloadPretrained,
                 ConfigureInstallDeps,
                 ConfigureInstallPaddle,
+                ConfigurePaddleCpu,
                 progress);
 
             ConfigureLog = log;
