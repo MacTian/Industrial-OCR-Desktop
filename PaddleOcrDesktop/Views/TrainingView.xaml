@@ -126,11 +126,48 @@
 
                 <GroupBox Header="状态" Margin="0,0,0,8">
                     <StackPanel Margin="8">
-                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" Margin="4"/>
+                        <TextBlock Text="{Binding StatusMessage}" FontWeight="Bold" Margin="4"
+                                   TextWrapping="Wrap"/>
                         <ProgressBar Value="{Binding TrainingProgress}" Height="20" Margin="4"
                                      IsIndeterminate="{Binding IsTrainingRunning}"/>
                     </StackPanel>
                 </GroupBox>
+
+                <Expander Header="📖 环境依赖指南" Margin="0,0,0,8" IsExpanded="False">
+                    <StackPanel Margin="12,8">
+                        <TextBlock FontWeight="Bold" Margin="0,0,0,4">训练需要以下依赖：</TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            1. Python 3.8+ — 下载地址: https://www.python.org/downloads/
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            2. PaddlePaddle — CPU: pip install paddlepaddle / GPU: pip install paddlepaddle-gpu
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            3. PaddleOCR 源码 — git clone https://github.com/PaddlePaddle/PaddleOCR.git
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            4. PaddleOCR 依赖 — cd PaddleOCR &amp;&amp; pip install -r requirements.txt
+                        </TextBlock>
+                        <Separator Margin="0,8"/>
+                        <TextBlock FontWeight="Bold" Margin="0,0,0,4">目录结构示例：</TextBlock>
+                        <TextBlock FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="4,2"
+                                   xml:space="preserve">
+PaddleOCR/
+├── tools/train.py          ← 训练脚本
+├── ppocr/                  ← 模型定义
+├── configs/                ← 配置模板
+└── requirements.txt        ← Python 依赖</TextBlock>
+                        <Separator Margin="0,8"/>
+                        <TextBlock FontWeight="Bold" Margin="0,0,0,4">操作步骤：</TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2" LineHeight="20">
+                            ① 在「标注模式」中导出训练数据<LineBreak/>
+                            ② 设置 PaddleOCR 目录（克隆的仓库路径）<LineBreak/>
+                            ③ 点击「环境检查」确认依赖就绪<LineBreak/>
+                            ④ 点击「生成配置」创建 YAML 配置文件<LineBreak/>
+                            ⑤ 点击「开始训练」启动训练
+                        </TextBlock>
+                    </StackPanel>
+                </Expander>
             </StackPanel>
         </ScrollViewer>
 

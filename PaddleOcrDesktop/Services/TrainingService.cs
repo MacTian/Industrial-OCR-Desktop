@@ -12,37 +12,115 @@ public class TrainingService
     /// </summary>
     public (bool Ok, string Message) CheckEnvironment(string paddleocrDir)
     {
-        if (!Directory.Exists(paddleocrDir))
-            return (false, $"PaddleOCR 目录不存在: {paddleocrDir}");
+        var messages = new List<string>();
+
+        // 1. 检查 PaddleOCR 目录
+        if (string.IsNullOrEmpty(paddleocrDir) || !Directory.Exists(paddleocrDir))
+        {
+            return (false,
+                $"PaddleOCR 目录不存在: {paddleocrDir}\n\n" +
+                "请先克隆 PaddleOCR 仓库：\n" +
+                "  git clone https://github.com/PaddlePaddle/PaddleOCR.git\n\n" +
+                "然后在「训练模式」设置中浏览选择该目录。");
+        }
 
         var trainPy = Path.Combine(paddleocrDir, "tools", "train.py");
         if (!File.Exists(trainPy))
-            return (false, $"未找到训练脚本: {trainPy}");
+        {
+            return (false,
+                $"未找到训练脚本: {trainPy}\n\n" +
+                "请确保 PaddleOCR 仓库完整（包含 tools/train.py）。\n" +
+                "如果目录正确但文件缺失，尝试：\n" +
+                "  git pull && git submodule update --init");
+        }
 
-        // 检查 Python 环境
+        messages.Add($"✓ PaddleOCR: {paddleocrDir}");
+        messages.Add($"✓ 训练脚本: tools/train.py");
+
+        // 2. 检查 Python 环境（尝试 python 和 python3）
+        string? pythonExe = null;
+        string? pythonVersion = null;
+
+        foreach (var exe in new[] { "python", "python3" })
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc == null) continue;
+                proc.WaitForExit(5000);
+                var version = proc.StandardOutput.ReadToEnd().Trim();
+                if (string.IsNullOrEmpty(version))
+                    version = proc.StandardError.ReadToEnd().Trim(); // Python 2 prints to stderr
+                if (!string.IsNullOrEmpty(version))
+                {
+                    pythonExe = exe;
+                    pythonVersion = version;
+                    break;
+                }
+            }
+            catch { }
+        }
+
+        if (pythonExe == null)
+        {
+            messages.Add("✗ Python: 未找到");
+            return (false,
+                string.Join("\n", messages) + "\n\n" +
+                "未检测到 Python 环境。\n" +
+                "请安装 Python 3.8+ 并确保 python 或 python3 命令可用。\n" +
+                "下载地址: https://www.python.org/downloads/");
+        }
+
+        messages.Add($"✓ {pythonVersion} ({pythonExe})");
+
+        // 3. 检查 paddlepaddle 包
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "python",
-                Arguments = "--version",
+                FileName = pythonExe,
+                Arguments = "-c \"import paddle; print(paddle.__version__)\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
             using var proc = Process.Start(psi);
-            proc?.WaitForExit(5000);
-            var version = proc?.StandardOutput.ReadToEnd().Trim();
-            if (string.IsNullOrEmpty(version))
-                return (false, "未检测到 Python 环境，请确保 Python 已安装并加入 PATH");
-
-            return (true, $"环境检查通过。Python: {version}\nPaddleOCR: {paddleocrDir}");
+            if (proc != null)
+            {
+                proc.WaitForExit(10000);
+                var paddleVersion = proc.StandardOutput.ReadToEnd().Trim();
+                if (!string.IsNullOrEmpty(paddleVersion))
+                {
+                    messages.Add($"✓ PaddlePaddle: {paddleVersion}");
+                }
+                else
+                {
+                    var err = proc.StandardError.ReadToEnd().Trim();
+                    messages.Add("✗ PaddlePaddle: 未安装");
+                    return (false,
+                        string.Join("\n", messages) + "\n\n" +
+                        "未检测到 PaddlePaddle 包。\n" +
+                        "请安装: pip install paddlepaddle\n" +
+                        "(GPU 版本: pip install paddlepaddle-gpu)");
+                }
+            }
         }
-        catch (Exception ex)
+        catch
         {
-            return (false, $"检查 Python 环境失败: {ex.Message}");
+            messages.Add("? PaddlePaddle: 检查失败");
         }
+
+        return (true, string.Join("\n", messages));
     }
 
     /// <summary>
