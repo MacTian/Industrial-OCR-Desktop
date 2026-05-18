@@ -121,12 +121,14 @@ public sealed class OcrEngine : IDisposable
                 }
 
                 // Extract ROI to a new bitmap
+                // DrawBitmap(params): bitmap, source, dest, paint
+                // source = region in original bitmap, dest = region in target bitmap
                 using var roiBmp = new SKBitmap(w, h);
                 using (var canvas = new SKCanvas(roiBmp))
                 {
                     canvas.DrawBitmap(bmp,
-                        new SKRectI(0, 0, w, h),
-                        new SKRectI(x, y, x + w, y + h));
+                        new SKRectI(x, y, x + w, y + h),  // source: from original
+                        new SKRectI(0, 0, w, h));          // dest: fill entire crop
                 }
 
                 // Resize if too large

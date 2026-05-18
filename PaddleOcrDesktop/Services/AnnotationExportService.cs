@@ -2,8 +2,8 @@
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using OpenCvSharp;
 using PaddleOcrDesktop.Models;
-using SkiaSharp;
 
 namespace PaddleOcrDesktop.Services;
 
@@ -54,6 +54,7 @@ public class AnnotationExportService
     /// 导出识别训练数据
     /// 为每张图的每个标注区域裁剪图片，生成 crop_img/ 目录和 rec_label.txt
     /// 格式：crop_img/img_001_00001.jpg\ttext
+    /// 使用 OpenCvSharp 裁剪，避免 SkiaSharp 坐标问题
     /// </summary>
     public void ExportRecTrainingData(
         string labelFilePath,
@@ -68,8 +69,8 @@ public class AnnotationExportService
 
         foreach (var img in annotations)
         {
-            using var bmp = SKBitmap.Decode(img.ImagePath);
-            if (bmp.IsEmpty) continue;
+            using var mat = Cv2.ImRead(img.ImagePath);
+            if (mat.Empty()) continue;
 
             foreach (var region in img.Regions)
             {
@@ -84,32 +85,21 @@ public class AnnotationExportService
                 // Clamp to image bounds
                 minX = Math.Max(0, minX);
                 minY = Math.Max(0, minY);
-                maxX = Math.Min(bmp.Width, maxX);
-                maxY = Math.Min(bmp.Height, maxY);
+                maxX = Math.Min(mat.Width, maxX);
+                maxY = Math.Min(mat.Height, maxY);
 
                 var w = maxX - minX;
                 var h = maxY - minY;
                 if (w <= 0 || h <= 0) continue;
 
-                // 裁剪
-                using var cropBmp = new SKBitmap(w, h);
-                using (var canvas = new SKCanvas(cropBmp))
-                {
-                    canvas.DrawBitmap(bmp,
-                        new SKRectI(0, 0, w, h),
-                        new SKRectI(minX, minY, maxX, maxY));
-                }
+                // 使用 OpenCvSharp 裁剪（ROI 子矩阵）
+                using var cropMat = mat[new Rect(minX, minY, w, h)];
 
                 // 保存裁剪图片
                 globalIdx++;
                 var cropFileName = $"{Path.GetFileNameWithoutExtension(img.ImagePath)}_{globalIdx:D5}.jpg";
                 var cropPath = Path.Combine(cropDir, cropFileName);
-
-                using (var data = cropBmp.Encode(SKEncodedImageFormat.Jpeg, 90))
-                using (var fs = File.Create(cropPath))
-                {
-                    data.SaveTo(fs);
-                }
+                Cv2.ImWrite(cropPath, cropMat);
 
                 // 标签行
                 var relativeCropPath = $"crop_img/{cropFileName}";
