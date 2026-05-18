@@ -113,14 +113,41 @@
                         <TextBlock Grid.Row="2" Grid.Column="0" Text="GPU ID:" VerticalAlignment="Center" Margin="4"/>
                         <TextBox Grid.Row="2" Grid.Column="1" Margin="4" Text="{Binding Config.GpuDeviceId}"/>
 
-                        <TextBlock Grid.Row="2" Grid.Column="2" Text="预训练模型:" VerticalAlignment="Center" Margin="4"/>
-                        <TextBox Grid.Row="2" Grid.Column="3" Margin="4" Text="{Binding Config.PretrainedModelDir}"/>
+                        <TextBlock Grid.Row="2" Grid.Column="2" Text="预训练模型:" VerticalAlignment="Center" Margin="4"
+                                   ToolTip="包含 .pdmodel 和 .pdparams 文件的目录，留空则从头训练"/>
+                        <Grid Grid.Row="2" Grid.Column="3" Margin="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding Config.PretrainedModelDir}"
+                                     ToolTip="包含 .pdmodel 和 .pdparams 文件的目录，留空则从头训练"/>
+                            <Button Grid.Column="1" Content="🔍" Margin="2,0,0,0" Padding="4,0"
+                                    ToolTip="自动检测预训练模型"
+                                    Command="{Binding AutoDetectPretrainedModelCommand}"/>
+                            <Button Grid.Column="2" Content="浏览..." Margin="2,0,0,0"
+                                    Command="{Binding BrowsePretrainedModelCommand}"/>
+                        </Grid>
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="字典文件:" VerticalAlignment="Center" Margin="4"/>
-                        <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="4"
-                                 Text="{Binding Config.DictFilePath}"/>
-                        <Button Grid.Row="3" Grid.Column="3" Content="浏览..." Margin="4"
-                                Command="{Binding BrowseDictFileCommand}"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="字典文件:" VerticalAlignment="Center" Margin="4"
+                                   ToolTip="识别模式必须，每行一个字符的文本文件"/>
+                        <Grid Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding Config.DictFilePath}"
+                                     ToolTip="识别模式必须，每行一个字符的文本文件"/>
+                            <Button Grid.Column="1" Content="🔍" Margin="2,0,0,0" Padding="4,0"
+                                    ToolTip="自动检测字典文件"
+                                    Command="{Binding AutoDetectDictFileCommand}"/>
+                            <Button Grid.Column="2" Content="浏览..." Margin="2,0,0,0"
+                                    Command="{Binding BrowseDictFileCommand}"/>
+                        </Grid>
+                        <TextBlock Grid.Row="3" Grid.Column="3" Text="rec必填" VerticalAlignment="Center"
+                                   Foreground="Gray" FontSize="10"/>
                     </Grid>
                 </GroupBox>
 
@@ -137,7 +164,7 @@
                     <StackPanel Margin="12,8">
                         <TextBlock FontWeight="Bold" Margin="0,0,0,4">训练需要以下依赖：</TextBlock>
                         <TextBlock TextWrapping="Wrap" Margin="4,2">
-                            1. Python 3.8+ — 下载地址: https://www.python.org/downloads/
+                            1. Python 3.8+ — https://www.python.org/downloads/
                         </TextBlock>
                         <TextBlock TextWrapping="Wrap" Margin="4,2">
                             2. PaddlePaddle — CPU: pip install paddlepaddle / GPU: pip install paddlepaddle-gpu
@@ -147,6 +174,23 @@
                         </TextBlock>
                         <TextBlock TextWrapping="Wrap" Margin="4,2">
                             4. PaddleOCR 依赖 — cd PaddleOCR &amp;&amp; pip install -r requirements.txt
+                        </TextBlock>
+                        <Separator Margin="0,8"/>
+                        <TextBlock FontWeight="Bold" Margin="0,0,0,4">预训练模型（微调时必需）：</TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            检测模型：https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_det_infer.tar
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            识别模型：https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_rec_infer.tar
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            解压后将 .pdmodel 和 .pdparams 放入 inference/ 目录，点击 🔍 自动检测
+                        </TextBlock>
+                        <Separator Margin="0,8"/>
+                        <TextBlock FontWeight="Bold" Margin="0,0,0,4">字典文件（识别模式必需）：</TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="4,2">
+                            字典文件通常位于 PaddleOCR/ppocr/utils/ 目录下。
+                            本应用自带 ppocrv5_dict.txt，点击 🔍 自动检测。
                         </TextBlock>
                         <Separator Margin="0,8"/>
                         <TextBlock FontWeight="Bold" Margin="0,0,0,4">目录结构示例：</TextBlock>

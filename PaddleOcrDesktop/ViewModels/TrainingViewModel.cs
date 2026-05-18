@@ -39,6 +39,13 @@ public partial class TrainingViewModel : ViewModelBase
         Config.DataDir = Path.Combine(Environment.CurrentDirectory, "train_data");
         Config.OutputDir = Path.Combine(Environment.CurrentDirectory, "output");
         Config.LabelFilePath = Path.Combine(Environment.CurrentDirectory, "train_data", "det_train_label.txt");
+
+        // 默认字典文件：优先使用本应用自带的
+        var builtInDict = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "ppocr_v5_models", "onnx", "ppocrv5_dict.txt");
+        if (File.Exists(builtInDict))
+        {
+            Config.DictFilePath = builtInDict;
+        }
     }
 
     // ─── 浏览命令 ─────────────────────────────────────────────
@@ -81,6 +88,67 @@ public partial class TrainingViewModel : ViewModelBase
         var dialog = new OpenFileDialog { Filter = "字典文件|*.txt|所有文件|*.*", Title = "选择字典文件" };
         if (dialog.ShowDialog() == true)
             Config.DictFilePath = dialog.FileName;
+    }
+
+    [RelayCommand]
+    private void BrowsePretrainedModel()
+    {
+        var dialog = new OpenFolderDialog { Title = "选择预训练模型目录（包含 .pdmodel 和 .pdparams 文件）" };
+        if (dialog.ShowDialog() == true)
+            Config.PretrainedModelDir = dialog.FolderName;
+    }
+
+    [RelayCommand]
+    private void AutoDetectPretrainedModel()
+    {
+        var detected = _trainingService.AutoDetectPretrainedModel(PaddleocrDir, Config.Mode);
+        if (detected != null)
+        {
+            Config.PretrainedModelDir = detected;
+            StatusMessage = $"已自动检测预训练模型: {detected}";
+        }
+        else
+        {
+            var info = TrainingService.GetPretrainedModelDownloadInfo(Config.Mode);
+            MessageBox.Show(
+                $"未在 PaddleOCR 目录下找到匹配的预训练模型。\n\n{info}",
+                "未找到预训练模型",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    [RelayCommand]
+    private void AutoDetectDictFile()
+    {
+        var detected = _trainingService.AutoDetectDictFile(PaddleocrDir);
+        if (detected != null)
+        {
+            Config.DictFilePath = detected;
+            StatusMessage = $"已自动检测字典文件: {detected}";
+        }
+        else
+        {
+            // 尝试从 ONNX 模型目录查找
+            var onnxDict = System.IO.Path.Combine(
+                System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "ppocr_v5_models", "onnx"),
+                "ppocrv5_dict.txt");
+            if (System.IO.File.Exists(onnxDict))
+            {
+                Config.DictFilePath = onnxDict;
+                StatusMessage = $"已使用本应用自带的字典: {onnxDict}";
+            }
+            else
+            {
+                MessageBox.Show(
+                    "未找到字典文件。\n\n" +
+                    "字典文件通常位于 PaddleOCR/ppocr/utils/ 目录下。\n" +
+                    "您也可以使用本应用自带的 ppocrv5_dict.txt。",
+                    "未找到字典文件",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
     }
 
     // ─── 训练控制 ─────────────────────────────────────────────

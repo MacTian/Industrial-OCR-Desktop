@@ -77,13 +77,22 @@ public class TrainingConfig
 
     /// <summary>
     /// 预训练模型目录（微调时使用）
+    /// PaddleOCR 格式：包含 .pdmodel 和 .pdparams 文件的目录
+    /// 如果留空，将从头开始训练
     /// </summary>
     public string? PretrainedModelDir { get; set; }
 
     /// <summary>
     /// 字典文件路径（rec 模式必须）
+    /// 每行一个字符，用于定义识别字符集
     /// </summary>
     public string? DictFilePath { get; set; }
+
+    /// <summary>
+    /// ONNX 模型目录（本应用导出格式）
+    /// 训练前会自动查找是否需要转换
+    /// </summary>
+    public string? OnnxModelDir { get; set; }
 
     /// <summary>
     /// 训练图片最短边

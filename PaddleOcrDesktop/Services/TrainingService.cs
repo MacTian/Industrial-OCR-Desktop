@@ -82,7 +82,26 @@ public class TrainingService
 
         messages.Add($"✓ {pythonVersion} ({pythonExe})");
 
-        // 3. 检查 paddlepaddle 包
+        // 3. 检查预训练模型（可选，仅提示）
+        var pretrainedDet = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Detection);
+        var pretrainedRec = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Recognition);
+        if (pretrainedDet != null)
+            messages.Add($"✓ 预训练检测模型: {pretrainedDet}");
+        else
+            messages.Add("○ 预训练检测模型: 未找到（将从零训练）");
+        if (pretrainedRec != null)
+            messages.Add($"✓ 预训练识别模型: {pretrainedRec}");
+        else
+            messages.Add("○ 预训练识别模型: 未找到（将从零训练）");
+
+        // 4. 检查字典文件（rec 模式需要）
+        var dictFile = AutoDetectDictFile(paddleocrDir);
+        if (dictFile != null)
+            messages.Add($"✓ 字典文件: {dictFile}");
+        else
+            messages.Add("○ 字典文件: 未找到（rec 模式必须手动指定）");
+
+        // 5. 检查 paddlepaddle 包
         try
         {
             var psi = new ProcessStartInfo
@@ -185,6 +204,95 @@ public class TrainingService
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// 自动检测预训练模型路径
+    /// 在 PaddleOCR 目录下查找常见的预训练模型位置
+    /// </summary>
+    public string? AutoDetectPretrainedModel(string paddleocrDir, TrainingMode mode)
+    {
+        // PaddleOCR 预训练模型常见位置
+        var searchDirs = new[]
+        {
+            Path.Combine(paddleocrDir, "inference"),
+            Path.Combine(paddleocrDir, "models"),
+            Path.Combine(paddleocrDir, "output", "best_accuracy"),
+            Path.Combine(paddleocrDir, "output"),
+        };
+
+        var prefix = mode == TrainingMode.Detection ? "det" : "rec";
+
+        foreach (var dir in searchDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+
+            // 查找 .pdmodel 文件
+            var pdfiles = Directory.GetFiles(dir, "*.pdmodel", SearchOption.AllDirectories);
+            foreach (var pdf in pdfiles)
+            {
+                var name = Path.GetFileNameWithoutExtension(pdf).ToLowerInvariant();
+                // 匹配 det_*.pdmodel 或 rec_*.pdmodel
+                if (name.StartsWith(prefix + "_") || name.Contains(prefix))
+                {
+                    return Path.GetDirectoryName(pdf);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 自动检测字典文件路径
+    /// </summary>
+    public string? AutoDetectDictFile(string paddleocrDir)
+    {
+        var searchPaths = new[]
+        {
+            Path.Combine(paddleocrDir, "ppocr", "utils", "ppocr_keys_v1.txt"),
+            Path.Combine(paddleocrDir, "ppocr", "utils", "dict", "ppocr_keys_v1.txt"),
+            Path.Combine(paddleocrDir, "configs", "rec", "PP-OCRv3", "rec_multi_language_lite_train.yml"),
+        };
+
+        // 先查找 txt 字典文件
+        var dictFiles = Directory.GetFiles(Path.Combine(paddleocrDir, "ppocr"), "*.txt", SearchOption.AllDirectories);
+        foreach (var f in dictFiles)
+        {
+            var name = Path.GetFileName(f).ToLowerInvariant();
+            if (name.Contains("key") || name.Contains("dict"))
+            {
+                return f;
+            }
+        }
+
+        foreach (var path in searchPaths)
+        {
+            if (File.Exists(path)) return path;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 获取推荐的预训练模型下载信息
+    /// </summary>
+    public static string GetPretrainedModelDownloadInfo(TrainingMode mode)
+    {
+        if (mode == TrainingMode.Detection)
+        {
+            return "检测模型推荐下载：\n" +
+                   "  PP-OCRv5 中文检测模型\n" +
+                   "  https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_det_infer.tar\n\n" +
+                   "解压后将 .pdmodel 和 .pdparams 文件放入 PaddleOCR/inference/ 目录";
+        }
+        else
+        {
+            return "识别模型推荐下载：\n" +
+                   "  PP-OCRv5 中文识别模型\n" +
+                   "  https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_rec_infer.tar\n\n" +
+                   "解压后将 .pdmodel 和 .pdparams 文件放入 PaddleOCR/inference/ 目录";
+        }
     }
 
     /// <summary>
