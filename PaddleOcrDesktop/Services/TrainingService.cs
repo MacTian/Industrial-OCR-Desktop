@@ -296,6 +296,353 @@ public class TrainingService
     }
 
     /// <summary>
+    /// 一键自动配置训练环境
+    /// </summary>
+    public async Task<(bool Ok, string Log)> AutoConfigureEnvironment(
+        string paddleocrDir,
+        TrainingMode mode,
+        bool downloadPretrained,
+        bool installDeps,
+        bool installPaddle,
+        IProgress<(string Step, string Detail, bool IsError)>? progress = null)
+    {
+        var log = new System.Text.StringBuilder();
+        string? pythonExe = null;
+
+        void Report(string step, string detail, bool isError = false)
+        {
+            progress?.Report((step, detail, isError));
+            log.AppendLine($"[{step}] {detail}");
+        }
+
+        // ── Step 1: 检查/克隆 PaddleOCR ──
+        Report("1/6", "检查 PaddleOCR 目录...");
+        if (string.IsNullOrEmpty(paddleocrDir) || !Directory.Exists(paddleocrDir))
+        {
+            Report("1/6", "PaddleOCR 目录不存在，尝试自动克隆...");
+            try
+            {
+                var parentDir = Path.GetDirectoryName(paddleocrDir);
+                if (string.IsNullOrEmpty(parentDir) || !Directory.Exists(parentDir))
+                {
+                    Report("1/6", $"父目录不存在: {parentDir}", true);
+                    return (false, log.ToString());
+                }
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = $"clone https://github.com/PaddlePaddle/PaddleOCR.git \"{paddleocrDir}\"",
+                    WorkingDirectory = parentDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc == null)
+                {
+                    Report("1/6", "无法启动 git 进程，请手动克隆 PaddleOCR", true);
+                    return (false, log.ToString());
+                }
+                await proc.WaitForExitAsync();
+                if (proc.ExitCode != 0)
+                {
+                    var err = await proc.StandardError.ReadToEndAsync();
+                    Report("1/6", $"git clone 失败: {err}", true);
+                    return (false, log.ToString());
+                }
+                Report("1/6", $"✓ PaddleOCR 已克隆到: {paddleocrDir}");
+            }
+            catch (Exception ex)
+            {
+                Report("1/6", $"克隆失败: {ex.Message}", true);
+                return (false, log.ToString());
+            }
+        }
+        else
+        {
+            Report("1/6", $"✓ PaddleOCR 目录已存在: {paddleocrDir}");
+        }
+
+        var trainPyPath = Path.Combine(paddleocrDir, "tools", "train.py");
+        if (!File.Exists(trainPyPath))
+        {
+            Report("1/6", "未找到 tools/train.py，仓库可能不完整", true);
+            return (false, log.ToString());
+        }
+
+        // ── Step 2: 检查 Python ──
+        Report("2/6", "检查 Python 环境...");
+        foreach (var exe in new[] { "python", "python3" })
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc == null) continue;
+                await proc.WaitForExitAsync();
+                var ver = (await proc.StandardOutput.ReadToEndAsync()).Trim();
+                if (string.IsNullOrEmpty(ver))
+                    ver = (await proc.StandardError.ReadToEndAsync()).Trim();
+                if (!string.IsNullOrEmpty(ver))
+                {
+                    pythonExe = exe;
+                    Report("2/6", $"✓ {ver} ({exe})");
+                    break;
+                }
+            }
+            catch { }
+        }
+        if (pythonExe == null)
+        {
+            Report("2/6", "✗ 未找到 Python，请先安装 Python 3.8+", true);
+            return (false, log.ToString());
+        }
+
+        // ── Step 3: 安装 PaddlePaddle ──
+        if (installPaddle)
+        {
+            Report("3/6", "检查 PaddlePaddle...");
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = pythonExe,
+                    Arguments = "-c \"import paddle; print(paddle.__version__)\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc != null)
+                {
+                    await proc.WaitForExitAsync();
+                    var ver = (await proc.StandardOutput.ReadToEndAsync()).Trim();
+                    if (!string.IsNullOrEmpty(ver))
+                    {
+                        Report("3/6", $"✓ PaddlePaddle {ver} 已安装");
+                    }
+                    else
+                    {
+                        Report("3/6", "安装 PaddlePaddle (CPU 版本)...");
+                        var pipPsi = new ProcessStartInfo
+                        {
+                            FileName = pythonExe,
+                            Arguments = "-m pip install paddlepaddle -i https://mirrors.aliyun.com/pypi/simple/",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                        using var pipProc = Process.Start(pipPsi);
+                        if (pipProc != null)
+                        {
+                            await pipProc.WaitForExitAsync();
+                            Report("3/6", pipProc.ExitCode == 0
+                                ? "✓ PaddlePaddle 安装成功"
+                                : $"✗ 安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Report("3/6", $"检查/安装失败: {ex.Message}", true);
+            }
+        }
+        else
+        {
+            Report("3/6", "跳过（未勾选）");
+        }
+
+        // ── Step 4: 安装 PaddleOCR 依赖 ──
+        if (installDeps)
+        {
+            Report("4/6", "安装 PaddleOCR Python 依赖...");
+            var reqFile = Path.Combine(paddleocrDir, "requirements.txt");
+            if (File.Exists(reqFile))
+            {
+                try
+                {
+                    var pipPsi = new ProcessStartInfo
+                    {
+                        FileName = pythonExe,
+                        Arguments = $"-m pip install -r \"{reqFile}\" -i https://mirrors.aliyun.com/pypi/simple/",
+                        WorkingDirectory = paddleocrDir,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var pipProc = Process.Start(pipPsi);
+                    if (pipProc != null)
+                    {
+                        // 异步读取输出，避免阻塞
+                        var outputTask = Task.Run(async () =>
+                        {
+                            while (!pipProc.StandardOutput.EndOfStream)
+                            {
+                                var line = await pipProc.StandardOutput.ReadLineAsync();
+                                if (line != null)
+                                    Report("4/6", $"  {line}");
+                            }
+                        });
+                        await pipProc.WaitForExitAsync();
+                        await outputTask;
+                        Report("4/6", pipProc.ExitCode == 0
+                            ? "✓ 依赖安装完成"
+                            : $"✗ 部分依赖安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Report("4/6", $"安装失败: {ex.Message}", true);
+                }
+            }
+            else
+            {
+                Report("4/6", "未找到 requirements.txt，跳过");
+            }
+        }
+        else
+        {
+            Report("4/6", "跳过（未勾选）");
+        }
+
+        // ── Step 5: 下载预训练模型 ──
+        if (downloadPretrained)
+        {
+            Report("5/6", "检查预训练模型...");
+            var inferenceDir = Path.Combine(paddleocrDir, "inference");
+            Directory.CreateDirectory(inferenceDir);
+
+            var detModelDir = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Detection);
+            var recModelDir = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Recognition);
+
+            if (detModelDir == null && mode == TrainingMode.Detection)
+            {
+                Report("5/6", "下载检测预训练模型...");
+                var url = "https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_det_infer.tar";
+                var tarPath = Path.Combine(inferenceDir, "det_model.tar");
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+                    var data = await http.GetByteArrayAsync(url);
+                    await File.WriteAllBytesAsync(tarPath, data);
+                    Report("5/6", $"✓ 下载完成 ({data.Length / 1024 / 1024}MB)");
+
+                    // 解压
+                    Report("5/6", "解压检测模型...");
+                    var extractPsi = new ProcessStartInfo
+                    {
+                        FileName = "tar",
+                        Arguments = $"-xf \"{tarPath}\" -C \"{inferenceDir}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var extractProc = Process.Start(extractPsi);
+                    if (extractProc != null)
+                    {
+                        await extractProc.WaitForExitAsync();
+                        Report("5/6", "✓ 检测模型解压完成");
+                    }
+                    File.Delete(tarPath);
+                }
+                catch (Exception ex)
+                {
+                    Report("5/6", $"下载/解压失败: {ex.Message}", true);
+                }
+            }
+            else if (mode == TrainingMode.Detection)
+            {
+                Report("5/6", $"✓ 检测模型已存在: {detModelDir}");
+            }
+
+            if (recModelDir == null && mode == TrainingMode.Recognition)
+            {
+                Report("5/6", "下载识别预训练模型...");
+                var url = "https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_rec_infer.tar";
+                var tarPath = Path.Combine(inferenceDir, "rec_model.tar");
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+                    var data = await http.GetByteArrayAsync(url);
+                    await File.WriteAllBytesAsync(tarPath, data);
+                    Report("5/6", $"✓ 下载完成 ({data.Length / 1024 / 1024}MB)");
+
+                    Report("5/6", "解压识别模型...");
+                    var extractPsi = new ProcessStartInfo
+                    {
+                        FileName = "tar",
+                        Arguments = $"-xf \"{tarPath}\" -C \"{inferenceDir}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var extractProc = Process.Start(extractPsi);
+                    if (extractProc != null)
+                    {
+                        await extractProc.WaitForExitAsync();
+                        Report("5/6", "✓ 识别模型解压完成");
+                    }
+                    File.Delete(tarPath);
+                }
+                catch (Exception ex)
+                {
+                    Report("5/6", $"下载/解压失败: {ex.Message}", true);
+                }
+            }
+            else if (mode == TrainingMode.Recognition)
+            {
+                Report("5/6", $"✓ 识别模型已存在: {recModelDir}");
+            }
+        }
+        else
+        {
+            Report("5/6", "跳过（未勾选）");
+        }
+
+        // ── Step 6: 自动检测并设置参数 ──
+        Report("6/6", "自动检测配置参数...");
+        var finalDet = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Detection);
+        var finalRec = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Recognition);
+        var finalDict = AutoDetectDictFile(paddleocrDir);
+
+        if (finalDet != null) Report("6/6", $"✓ 检测模型: {finalDet}");
+        if (finalRec != null) Report("6/6", $"✓ 识别模型: {finalRec}");
+        if (finalDict != null) Report("6/6", $"✓ 字典文件: {finalDict}");
+
+        Report("完成", "环境配置完成！");
+
+        return (true, log.ToString());
+    }
+
+    /// <summary>
+    /// 获取自动配置结果中的检测到的路径
+    /// </summary>
+    public (string? DetModel, string? RecModel, string? DictFile) GetDetectedPaths(string paddleocrDir)
+    {
+        return (
+            AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Detection),
+            AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Recognition),
+            AutoDetectDictFile(paddleocrDir)
+        );
+    }
+
+    /// <summary>
     /// 启动训练进程
     /// </summary>
     public Process? StartTraining(TrainingConfig config, string configPath, string paddleocrDir)

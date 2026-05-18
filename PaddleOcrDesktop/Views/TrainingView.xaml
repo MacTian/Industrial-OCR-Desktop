@@ -16,6 +16,9 @@
         <!-- 工具栏 -->
         <ToolBarTray Grid.Row="0">
             <ToolBar>
+                <Button Content="🚀 一键配置" Command="{Binding AutoConfigureCommand}" Margin="4"
+                        ToolTip="自动配置训练环境（克隆仓库、安装依赖、下载模型）"/>
+                <Separator/>
                 <Button Content="▶️ 开始训练" Command="{Binding StartTrainingCommand}" Margin="4"/>
                 <Button Content="⏹️ 停止训练" Command="{Binding StopTrainingCommand}" Margin="4"/>
                 <Separator/>
@@ -149,6 +152,37 @@
                         <TextBlock Grid.Row="3" Grid.Column="3" Text="rec必填" VerticalAlignment="Center"
                                    Foreground="Gray" FontSize="10"/>
                     </Grid>
+                </GroupBox>
+
+                <GroupBox Header="🚀 一键自动配置" Margin="0,0,0,8">
+                    <StackPanel Margin="8">
+                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="Gray">
+                            一键完成：克隆 PaddleOCR 仓库 / 安装 PaddlePaddle / 安装依赖 / 下载预训练模型。
+                            配置完成后自动填入训练参数。
+                        </TextBlock>
+                        <WrapPanel Margin="0,0,0,8">
+                            <CheckBox Content="下载预训练模型" IsChecked="{Binding ConfigureDownloadPretrained}"
+                                      Margin="0,0,16,4" VerticalAlignment="Center"/>
+                            <CheckBox Content="安装 PaddlePaddle" IsChecked="{Binding ConfigureInstallPaddle}"
+                                      Margin="0,0,16,4" VerticalAlignment="Center"/>
+                            <CheckBox Content="安装依赖 (requirements.txt)" IsChecked="{Binding ConfigureInstallDeps}"
+                                      Margin="0,0,16,4" VerticalAlignment="Center"/>
+                        </WrapPanel>
+                        <Button Content="🚀 开始自动配置" Command="{Binding AutoConfigureCommand}"
+                                HorizontalAlignment="Left" Padding="16,4" Margin="0,0,0,8"
+                                IsEnabled="{Binding IsConfiguring, Converter={StaticResource BoolInvert}}"/>
+                        <ProgressBar IsIndeterminate="{Binding IsConfiguring}" Height="4" Margin="0,0,0,4"
+                                     Visibility="{Binding IsConfiguring, Converter={StaticResource BoolToVis}}"/>
+                        <TextBlock Text="{Binding CurrentConfigureStep}" FontWeight="Bold" Margin="0,0,0,4"
+                                   Visibility="{Binding IsConfiguring, Converter={StaticResource BoolToVis}}"/>
+                        <Expander Header="配置日志" IsExpanded="False"
+                                  Visibility="{Binding ConfigureLog, Converter={StaticResource EmptyToVis}}">
+                            <TextBox Text="{Binding ConfigureLog, Mode=OneWay}"
+                                     IsReadOnly="True" VerticalScrollBarVisibility="Auto"
+                                     MaxHeight="120" FontFamily="Consolas" FontSize="10"
+                                     TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        </Expander>
+                    </StackPanel>
                 </GroupBox>
 
                 <GroupBox Header="状态" Margin="0,0,0,8">

@@ -6,6 +6,8 @@
         <ResourceDictionary>
             <BooleanToVisibilityConverter x:Key="BoolToVis"/>
             <views:FileNameConverter x:Key="FileNameConv" xmlns:views="clr-namespace:PaddleOcrDesktop.Views"/>
+            <views:BoolInvertConverter x:Key="BoolInvert" xmlns:views="clr-namespace:PaddleOcrDesktop.Views"/>
+            <views:EmptyToVisibilityConverter x:Key="EmptyToVis" xmlns:views="clr-namespace:PaddleOcrDesktop.Views"/>
             <ObjectDataProvider x:Key="TrainingModeValues" MethodName="GetValues"
                                 ObjectType="{x:Type sys:Enum}" xmlns:sys="clr-namespace:System;assembly=mscorlib">
                 <ObjectDataProvider.MethodParameters>

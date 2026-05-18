@@ -33,6 +33,24 @@ public partial class TrainingViewModel : ViewModelBase
 
     private System.Diagnostics.Process? _trainingProcess;
 
+    [ObservableProperty]
+    private bool _isConfiguring;
+
+    [ObservableProperty]
+    private string _configureLog = string.Empty;
+
+    [ObservableProperty]
+    private string _currentConfigureStep = string.Empty;
+
+    [ObservableProperty]
+    private bool _configureDownloadPretrained = true;
+
+    [ObservableProperty]
+    private bool _configureInstallDeps = true;
+
+    [ObservableProperty]
+    private bool _configureInstallPaddle = true;
+
     public TrainingViewModel()
     {
         _trainingService = new TrainingService();
@@ -150,6 +168,74 @@ public partial class TrainingViewModel : ViewModelBase
             }
         }
     }
+
+    // ─── 一键自动配置 ─────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(CanAutoConfigure))]
+    private async Task AutoConfigure()
+    {
+        if (IsConfiguring) return;
+        IsConfiguring = true;
+        ConfigureLog = string.Empty;
+        CurrentConfigureStep = "准备中...";
+
+        try
+        {
+            var progress = new Progress<(string Step, string Detail, bool IsError)>(item =>
+            {
+                CurrentConfigureStep = $"[{item.Step}]";
+                ConfigureLog += $"[{item.Step}] {item.Detail}\n";
+                if (item.IsError)
+                {
+                    ConfigureLog += $"  ⚠ 错误\n";
+                }
+            });
+
+            var (ok, log) = await _trainingService.AutoConfigureEnvironment(
+                PaddleocrDir,
+                Config.Mode,
+                ConfigureDownloadPretrained,
+                ConfigureInstallDeps,
+                ConfigureInstallPaddle,
+                progress);
+
+            ConfigureLog = log;
+
+            if (ok)
+            {
+                // 自动填充检测到的路径
+                var (det, rec, dict) = _trainingService.GetDetectedPaths(PaddleocrDir);
+                if (Config.Mode == TrainingMode.Detection && det != null)
+                    Config.PretrainedModelDir = det;
+                if (Config.Mode == TrainingMode.Recognition && rec != null)
+                    Config.PretrainedModelDir = rec;
+                if (dict != null)
+                    Config.DictFilePath = dict;
+
+                CurrentConfigureStep = "✅ 配置完成";
+                StatusMessage = "环境自动配置完成";
+                MessageBox.Show("环境配置完成！\n\n检测到的路径已自动填入训练参数。",
+                    "配置成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                CurrentConfigureStep = "❌ 配置失败";
+                StatusMessage = "环境配置失败，请查看日志";
+            }
+        }
+        catch (Exception ex)
+        {
+            ConfigureLog += $"\n[异常] {ex.Message}\n";
+            CurrentConfigureStep = "❌ 异常";
+            StatusMessage = $"配置异常: {ex.Message}";
+        }
+        finally
+        {
+            IsConfiguring = false;
+        }
+    }
+
+    private bool CanAutoConfigure() => !IsConfiguring && !IsTrainingRunning;
 
     // ─── 训练控制 ─────────────────────────────────────────────
 
