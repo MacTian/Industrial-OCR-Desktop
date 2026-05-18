@@ -1,0 +1,23 @@
+<Application x:Class="PaddleOcrDesktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+            <views:FileNameConverter x:Key="FileNameConv" xmlns:views="clr-namespace:PaddleOcrDesktop.Views"/>
+            <ObjectDataProvider x:Key="TrainingModeValues" MethodName="GetValues"
+                                ObjectType="{x:Type sys:Enum}" xmlns:sys="clr-namespace:System;assembly=mscorlib">
+                <ObjectDataProvider.MethodParameters>
+                    <x:Type TypeName="models:TrainingMode" xmlns:models="clr-namespace:PaddleOcrDesktop.Models"/>
+                </ObjectDataProvider.MethodParameters>
+            </ObjectDataProvider>
+            <ObjectDataProvider x:Key="TrainingDeviceValues" MethodName="GetValues"
+                                ObjectType="{x:Type sys:Enum}" xmlns:sys="clr-namespace:System;assembly=mscorlib">
+                <ObjectDataProvider.MethodParameters>
+                    <x:Type TypeName="models:TrainingDevice" xmlns:models="clr-namespace:PaddleOcrDesktop.Models"/>
+                </ObjectDataProvider.MethodParameters>
+            </ObjectDataProvider>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

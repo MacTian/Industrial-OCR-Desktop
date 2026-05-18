@@ -1,0 +1,120 @@
+<!-- Views/AnnotationView.xaml -->
+<UserControl x:Class="PaddleOcrDesktop.Views.AnnotationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AllowDrop="True">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 工具栏 -->
+        <ToolBarTray Grid.Row="0">
+            <ToolBar>
+                <Button Content="📂 打开图片" Command="{Binding OpenImageCommand}" Margin="4"/>
+                <Button Content="📁 打开文件夹" Command="{Binding OpenFolderCommand}" Margin="4"/>
+                <Separator/>
+                <Button Content="◀ 上一张" Command="{Binding PrevImageCommand}" Margin="4"/>
+                <Button Content="▶ 下一张" Command="{Binding NextImageCommand}" Margin="4"/>
+                <TextBlock Text="{Binding ImageIndexText}" VerticalAlignment="Center" Margin="8,0" FontWeight="Bold"/>
+                <Separator/>
+                <ToggleButton Content="✏️ 绘制标注" IsChecked="{Binding IsDrawingMode}" Margin="4"/>
+                <Button Content="🔍 OCR预标注" Command="{Binding AutoAnnotateCommand}" Margin="4"/>
+                <Button Content="🗑️ 删除选中" Command="{Binding DeleteSelectedCommand}" Margin="4"/>
+                <Separator/>
+                <Button Content="💾 保存标注" Command="{Binding SaveAnnotationsCommand}" Margin="4"/>
+                <Button Content="📤 导出训练数据" Command="{Binding ExportTrainingDataCommand}" Margin="4"/>
+            </ToolBar>
+        </ToolBarTray>
+
+        <!-- 主内容：图片标注区 + 标注列表 -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="250" MinWidth="200"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 左侧：图片标注画布 -->
+            <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Margin="4">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Disabled"
+                              x:Name="ImageScrollViewer">
+                    <Viewbox x:Name="ImageViewbox"
+                             Stretch="Uniform"
+                             HorizontalAlignment="Center"
+                             VerticalAlignment="Center"
+                             StretchDirection="Both">
+                        <Grid x:Name="ImageHostGrid">
+                            <Image x:Name="DisplayImage"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Canvas x:Name="OverlayCanvas"
+                                    Background="Transparent"
+                                    MouseLeftButtonDown="OverlayCanvas_MouseLeftButtonDown"
+                                    MouseMove="OverlayCanvas_MouseMove"
+                                    MouseLeftButtonUp="OverlayCanvas_MouseLeftButtonUp"
+                                    MouseRightButtonDown="OverlayCanvas_MouseRightButtonDown"/>
+                        </Grid>
+                    </Viewbox>
+                </ScrollViewer>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Left"/>
+
+            <!-- 右侧：图片列表 + 标注列表 -->
+            <Grid Grid.Column="1" Margin="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="40" MinHeight="30"/>
+                    <RowDefinition Height="150" MinHeight="80"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- 图片列表标题 -->
+                <TextBlock Grid.Row="0" Text="📷 图片列表" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0"/>
+
+                <!-- 图片列表 -->
+                <ListBox Grid.Row="1" ItemsSource="{Binding AllAnnotations}"
+                         SelectedItem="{Binding CurrentImage}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         MouseLeftButtonUp="ImageList_MouseLeftButtonUp">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding ImagePath, Converter={StaticResource FileNameConv}}"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding ImagePath}"/>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- 标注列表 -->
+                <GroupBox Grid.Row="2" Header="标注列表" Margin="0,4,0,0">
+                    <DataGrid ItemsSource="{Binding CurrentImage.Regions}"
+                              SelectedItem="{Binding SelectedRegion}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="False"
+                              SelectionMode="Single"
+                              CellEditEnding="AnnotationDataGrid_CellEditEnding"
+                              SelectionChanged="AnnotationDataGrid_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="40" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="文本" Binding="{Binding Text, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                            <DataGridCheckBoxColumn Header="忽略" Binding="{Binding IsIgnored}" Width="40"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+            </Grid>
+        </Grid>
+
+        <!-- 状态栏 -->
+        <StatusBar Grid.Row="2">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusMessage}"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock Text="{Binding AnnotationCountText}"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</UserControl>

@@ -1,0 +1,30 @@
+# Build results
+bin/
+obj/
+out/
+
+# IDE
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (large binaries)
+**/*.onnx
+**/*.pdmodel
+**/*.pdparams
+**/*.pdiparams
+PaddleOcrDesktop/Assets/
+
+# Logs
+*.log
+
+# NuGet
+packages/
+
+# Misc
+OcrTest/

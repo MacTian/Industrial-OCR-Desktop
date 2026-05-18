@@ -1,0 +1,44 @@
+<!-- Views/ImageView.xaml -->
+<UserControl x:Class="PaddleOcrDesktop.Views.ImageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AllowDrop="True">
+    <Grid>
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Disabled"
+                      x:Name="ImageScrollViewer">
+            <Viewbox x:Name="ImageViewbox"
+                     Stretch="Uniform"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     StretchDirection="Both">
+                <Grid x:Name="ImageHostGrid">
+                    <Image x:Name="DisplayImage"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Canvas x:Name="OverlayCanvas"
+                            Background="Transparent"
+                            MouseLeftButtonDown="OverlayCanvas_MouseLeftButtonDown"
+                            MouseMove="OverlayCanvas_MouseMove"
+                            MouseLeftButtonUp="OverlayCanvas_MouseLeftButtonUp"/>
+                </Grid>
+            </Viewbox>
+        </ScrollViewer>
+
+        <!-- 无图片时的提示 -->
+        <TextBlock Text="拖拽图片到此处，或点击「打开图片」"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   Foreground="Gray" FontSize="16"
+                   IsHitTestVisible="False">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ImageViewModel.HasImage}" Value="False">
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+    </Grid>
+</UserControl>
