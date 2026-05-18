@@ -1,5 +1,6 @@
 // Services/TrainingService.cs
 using System.Diagnostics;
+using System.Formats.Tar;
 using System.IO;
 using PaddleOcrDesktop.Models;
 
@@ -309,11 +310,95 @@ public class TrainingService
     {
         var log = new System.Text.StringBuilder();
         string? pythonExe = null;
+        var isWindows = OperatingSystem.IsWindows();
 
         void Report(string step, string detail, bool isError = false)
         {
             progress?.Report((step, detail, isError));
             log.AppendLine($"[{step}] {detail}");
+        }
+
+        // ── 辅助：启动进程（Windows 上用 cmd /c 确保 PATH 搜索）──
+        ProcessStartInfo CreateCmd(string fileName, string arguments, string? workingDir = null)
+        {
+            // Windows 上 git/python 可能不在直接 PATH 中，用 cmd /c 确保能找到
+            if (isWindows && !fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                // 已经是完整路径的直接用，否则用 cmd /c
+                if (!Path.IsPathRooted(fileName) && !File.Exists(fileName))
+                {
+                    return new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c {fileName} {arguments}",
+                        WorkingDirectory = workingDir ?? Environment.CurrentDirectory,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        StandardOutputEncoding = System.Text.Encoding.UTF8,
+                        StandardErrorEncoding = System.Text.Encoding.UTF8
+                    };
+                }
+            }
+            return new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                WorkingDirectory = workingDir ?? Environment.CurrentDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+        }
+
+        // ── 辅助：解压 tar 文件（跨平台）──
+        async Task<bool> ExtractTarAsync(string tarPath, string destDir)
+        {
+            try
+            {
+                // 优先使用系统 tar 命令
+                if (isWindows)
+                {
+                    try
+                    {
+                        var psi = CreateCmd("tar.exe", $"-xf \"{tarPath}\" -C \"{destDir}\"");
+                        using var proc = Process.Start(psi);
+                        if (proc != null)
+                        {
+                            await proc.WaitForExitAsync();
+                            if (proc.ExitCode == 0) return true;
+                        }
+                    }
+                    catch { /* tar.exe 不可用，继续回退 */ }
+                }
+                else
+                {
+                    try
+                    {
+                        var psi = CreateCmd("tar", $"-xf \"{tarPath}\" -C \"{destDir}\"");
+                        using var proc = Process.Start(psi);
+                        if (proc != null)
+                        {
+                            await proc.WaitForExitAsync();
+                            if (proc.ExitCode == 0) return true;
+                        }
+                    }
+                    catch { /* tar 不可用，继续回退 */ }
+                }
+
+                // 回退：使用 .NET 内置 System.Formats.Tar（.NET 7+）
+                Report("解压", "使用 .NET 内置 TarReader 解压...");
+                return await ExtractTarManagedAsync(tarPath, destDir);
+            }
+            catch (Exception ex)
+            {
+                Report("解压", $"解压失败: {ex.Message}", true);
+            }
+            return false;
         }
 
         // ── Step 1: 检查/克隆 PaddleOCR ──
@@ -330,20 +415,12 @@ public class TrainingService
                     return (false, log.ToString());
                 }
 
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    Arguments = $"clone https://github.com/PaddlePaddle/PaddleOCR.git \"{paddleocrDir}\"",
-                    WorkingDirectory = parentDir,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                var psi = CreateCmd("git", $"clone https://github.com/PaddlePaddle/PaddleOCR.git \"{paddleocrDir}\"", parentDir);
                 using var proc = Process.Start(psi);
                 if (proc == null)
                 {
-                    Report("1/6", "无法启动 git 进程，请手动克隆 PaddleOCR", true);
+                    Report("1/6", "无法启动 git 进程。请确认 Git 已安装并加入 PATH。", true);
+                    Report("1/6", "下载地址: https://git-scm.com/downloads", true);
                     return (false, log.ToString());
                 }
                 await proc.WaitForExitAsync();
@@ -358,6 +435,10 @@ public class TrainingService
             catch (Exception ex)
             {
                 Report("1/6", $"克隆失败: {ex.Message}", true);
+                if (ex is System.ComponentModel.Win32Exception)
+                {
+                    Report("1/6", "提示: 请确认 Git 已安装并加入 PATH", true);
+                }
                 return (false, log.ToString());
             }
         }
@@ -379,15 +460,7 @@ public class TrainingService
         {
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = exe,
-                    Arguments = "--version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                var psi = CreateCmd(exe, "--version");
                 using var proc = Process.Start(psi);
                 if (proc == null) continue;
                 await proc.WaitForExitAsync();
@@ -401,11 +474,17 @@ public class TrainingService
                     break;
                 }
             }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // 命令不存在，继续尝试下一个
+            }
             catch { }
         }
         if (pythonExe == null)
         {
             Report("2/6", "✗ 未找到 Python，请先安装 Python 3.8+", true);
+            Report("2/6", "下载地址: https://www.python.org/downloads/", true);
+            Report("2/6", "安装时请勾选 'Add Python to PATH'", true);
             return (false, log.ToString());
         }
 
@@ -415,15 +494,7 @@ public class TrainingService
             Report("3/6", "检查 PaddlePaddle...");
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = pythonExe,
-                    Arguments = "-c \"import paddle; print(paddle.__version__)\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                var psi = CreateCmd(pythonExe, "-c \"import paddle; print(paddle.__version__)\"");
                 using var proc = Process.Start(psi);
                 if (proc != null)
                 {
@@ -438,19 +509,11 @@ public class TrainingService
                         var pkg = paddleCpu ? "paddlepaddle" : "paddlepaddle-gpu";
                         var label = paddleCpu ? "CPU" : "GPU";
                         Report("3/6", $"安装 PaddlePaddle ({label} 版本)...");
-                        var pipPsi = new ProcessStartInfo
-                        {
-                            FileName = pythonExe,
-                            Arguments = $"-m pip install {pkg} -i https://mirrors.aliyun.com/pypi/simple/",
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            UseShellExecute = false,
-                            CreateNoWindow = true
-                        };
+                        Report("3/6", $"这可能需要几分钟，请耐心等待...");
+                        var pipPsi = CreateCmd(pythonExe, $"-m pip install {pkg} -i https://mirrors.aliyun.com/pypi/simple/");
                         using var pipProc = Process.Start(pipPsi);
                         if (pipProc != null)
                         {
-                            // 异步读取输出
                             var outputTask = Task.Run(async () =>
                             {
                                 while (!pipProc.StandardOutput.EndOfStream)
@@ -465,6 +528,10 @@ public class TrainingService
                             Report("3/6", pipProc.ExitCode == 0
                                 ? $"✓ PaddlePaddle ({label}) 安装成功"
                                 : $"✗ 安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
+                        }
+                        else
+                        {
+                            Report("3/6", "无法启动 pip 安装进程", true);
                         }
                     }
                 }
@@ -488,20 +555,10 @@ public class TrainingService
             {
                 try
                 {
-                    var pipPsi = new ProcessStartInfo
-                    {
-                        FileName = pythonExe,
-                        Arguments = $"-m pip install -r \"{reqFile}\" -i https://mirrors.aliyun.com/pypi/simple/",
-                        WorkingDirectory = paddleocrDir,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
+                    var pipPsi = CreateCmd(pythonExe, $"-m pip install -r \"{reqFile}\" -i https://mirrors.aliyun.com/pypi/simple/", paddleocrDir);
                     using var pipProc = Process.Start(pipPsi);
                     if (pipProc != null)
                     {
-                        // 异步读取输出，避免阻塞
                         var outputTask = Task.Run(async () =>
                         {
                             while (!pipProc.StandardOutput.EndOfStream)
@@ -516,6 +573,10 @@ public class TrainingService
                         Report("4/6", pipProc.ExitCode == 0
                             ? "✓ 依赖安装完成"
                             : $"✗ 部分依赖安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
+                    }
+                    else
+                    {
+                        Report("4/6", "无法启动 pip 安装进程", true);
                     }
                 }
                 catch (Exception ex)
@@ -543,35 +604,39 @@ public class TrainingService
             var detModelDir = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Detection);
             var recModelDir = AutoDetectPretrainedModel(paddleocrDir, TrainingMode.Recognition);
 
+            // 下载检测模型
             if (detModelDir == null && mode == TrainingMode.Detection)
             {
-                Report("5/6", "下载检测预训练模型...");
                 var url = "https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_det_infer.tar";
                 var tarPath = Path.Combine(inferenceDir, "det_model.tar");
                 try
                 {
-                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-                    var data = await http.GetByteArrayAsync(url);
-                    await File.WriteAllBytesAsync(tarPath, data);
-                    Report("5/6", $"✓ 下载完成 ({data.Length / 1024 / 1024}MB)");
-
-                    // 解压
-                    Report("5/6", "解压检测模型...");
-                    var extractPsi = new ProcessStartInfo
+                    Report("5/6", "下载检测预训练模型...");
+                    Report("5/6", $"  URL: {url}");
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+                    var response = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
+                    response.EnsureSuccessStatusCode();
+                    var totalBytes = response.Content.Headers.ContentLength ?? -1L;
+                    await using var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write);
+                    await using var stream = await response.Content.ReadAsStreamAsync();
+                    var buffer = new byte[81920];
+                    long totalRead = 0;
+                    int read;
+                    while ((read = await stream.ReadAsync(buffer)) > 0)
                     {
-                        FileName = "tar",
-                        Arguments = $"-xf \"{tarPath}\" -C \"{inferenceDir}\"",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    using var extractProc = Process.Start(extractPsi);
-                    if (extractProc != null)
-                    {
-                        await extractProc.WaitForExitAsync();
-                        Report("5/6", "✓ 检测模型解压完成");
+                        await fs.WriteAsync(buffer.AsMemory(0, read));
+                        totalRead += read;
+                        if (totalBytes > 0)
+                        {
+                            var pct = (int)(totalRead * 100 / totalBytes);
+                            Report("5/6", $"  下载中... {pct}% ({totalRead / 1024 / 1024}MB / {totalBytes / 1024 / 1024}MB)");
+                        }
                     }
+                    Report("5/6", $"✓ 下载完成 ({totalRead / 1024 / 1024}MB)");
+
+                    Report("5/6", "解压检测模型...");
+                    var ok = await ExtractTarAsync(tarPath, inferenceDir);
+                    Report("5/6", ok ? "✓ 检测模型解压完成" : "✗ 解压失败", !ok);
                     File.Delete(tarPath);
                 }
                 catch (Exception ex)
@@ -584,34 +649,39 @@ public class TrainingService
                 Report("5/6", $"✓ 检测模型已存在: {detModelDir}");
             }
 
+            // 下载识别模型
             if (recModelDir == null && mode == TrainingMode.Recognition)
             {
-                Report("5/6", "下载识别预训练模型...");
                 var url = "https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/ch_PP-OCRv5_rec_infer.tar";
                 var tarPath = Path.Combine(inferenceDir, "rec_model.tar");
                 try
                 {
-                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-                    var data = await http.GetByteArrayAsync(url);
-                    await File.WriteAllBytesAsync(tarPath, data);
-                    Report("5/6", $"✓ 下载完成 ({data.Length / 1024 / 1024}MB)");
+                    Report("5/6", "下载识别预训练模型...");
+                    Report("5/6", $"  URL: {url}");
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+                    var response = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
+                    response.EnsureSuccessStatusCode();
+                    var totalBytes = response.Content.Headers.ContentLength ?? -1L;
+                    await using var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write);
+                    await using var stream = await response.Content.ReadAsStreamAsync();
+                    var buffer = new byte[81920];
+                    long totalRead = 0;
+                    int read;
+                    while ((read = await stream.ReadAsync(buffer)) > 0)
+                    {
+                        await fs.WriteAsync(buffer.AsMemory(0, read));
+                        totalRead += read;
+                        if (totalBytes > 0)
+                        {
+                            var pct = (int)(totalRead * 100 / totalBytes);
+                            Report("5/6", $"  下载中... {pct}% ({totalRead / 1024 / 1024}MB / {totalBytes / 1024 / 1024}MB)");
+                        }
+                    }
+                    Report("5/6", $"✓ 下载完成 ({totalRead / 1024 / 1024}MB)");
 
                     Report("5/6", "解压识别模型...");
-                    var extractPsi = new ProcessStartInfo
-                    {
-                        FileName = "tar",
-                        Arguments = $"-xf \"{tarPath}\" -C \"{inferenceDir}\"",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    using var extractProc = Process.Start(extractPsi);
-                    if (extractProc != null)
-                    {
-                        await extractProc.WaitForExitAsync();
-                        Report("5/6", "✓ 识别模型解压完成");
-                    }
+                    var ok = await ExtractTarAsync(tarPath, inferenceDir);
+                    Report("5/6", ok ? "✓ 识别模型解压完成" : "✗ 解压失败", !ok);
                     File.Delete(tarPath);
                 }
                 catch (Exception ex)
@@ -645,6 +715,47 @@ public class TrainingService
     }
 
     /// <summary>
+    /// 使用 .NET 内置 TarReader 解压 tar 文件（.NET 7+ 回退方案）
+    /// </summary>
+    private async Task<bool> ExtractTarManagedAsync(string tarPath, string destDir)
+    {
+        try
+        {
+            await using var fs = File.OpenRead(tarPath);
+            using var reader = new System.Formats.Tar.TarReader(fs);
+            Directory.CreateDirectory(destDir);
+            int count = 0;
+            TarEntry? entry;
+            while ((entry = reader.GetNextEntry(copyData: false)) != null)
+            {
+                var entryName = entry.Name.Replace('/', Path.DirectorySeparatorChar);
+                var destPath = Path.Combine(destDir, entryName);
+
+                if (entry.EntryType == TarEntryType.Directory)
+                {
+                    Directory.CreateDirectory(destPath);
+                }
+                else
+                {
+                    var dir = Path.GetDirectoryName(destPath);
+                    if (dir != null) Directory.CreateDirectory(dir);
+                    // Use DataStream to read file content
+                    await using var entryStream = entry.DataStream ?? throw new InvalidOperationException($"Tar entry '{entry.Name}' has no data stream.");
+                    await using var outStream = File.Create(destPath);
+                    await entryStream.CopyToAsync(outStream);
+                    count++;
+                }
+            }
+            return count > 0;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"ExtractTarManagedAsync failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 获取自动配置结果中的检测到的路径
     /// </summary>
     public (string? DetModel, string? RecModel, string? DictFile) GetDetectedPaths(string paddleocrDir)
@@ -669,32 +780,54 @@ public class TrainingService
             ? $"--gpus {config.GpuDeviceId}"
             : "--use_gpu false";
 
-        var psi = new ProcessStartInfo
+        var isWindows = OperatingSystem.IsWindows();
+        ProcessStartInfo psi;
+
+        if (isWindows)
         {
-            FileName = "python",
-            Arguments = $"-u {trainPy} -c {configPath} {gpuArgs}",
-            WorkingDirectory = paddleocrDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = System.Text.Encoding.UTF8,
-            StandardErrorEncoding = System.Text.Encoding.UTF8
-        };
+            // Windows 上用 cmd /c 确保 python 能被 PATH 找到
+            psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c python -u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
+                WorkingDirectory = paddleocrDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+        }
+        else
+        {
+            psi = new ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = $"-u {trainPy} -c {configPath} {gpuArgs}",
+                WorkingDirectory = paddleocrDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+        }
 
         try
         {
             var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.Start();
 
-            // 将错误输出重定向到标准输出
+            // 将错误输出合并到标准输出流
             proc.ErrorDataReceived += (_, e) =>
             {
-                if (e.Data != null)
-                    proc.BeginOutputReadLine();
+                // 错误数据会通过 StandardError 读取，不合并
             };
 
             proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
             return proc;
         }
         catch

@@ -299,7 +299,7 @@ public partial class TrainingViewModel : ViewModelBase
             Directory.CreateDirectory(Config.OutputDir);
             var configPath = Path.Combine(Config.OutputDir, $"train_config_{Config.Mode.ToString().ToLower()}.yaml");
             var yaml = _trainingService.GenerateTrainingConfigYaml(Config);
-            File.WriteAllText(configPath, yaml);
+            await File.WriteAllTextAsync(configPath, yaml);
 
             IsTrainingRunning = true;
             var now = System.DateTime.Now;
