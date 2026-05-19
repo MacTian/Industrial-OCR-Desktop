@@ -8,6 +8,40 @@ namespace PaddleOcrDesktop.Services;
 
 public class TrainingService
 {
+    // ── 辅助：用 where/which 解析可执行文件完整路径 ──
+    // UseShellExecute=false 时 Process.Start 不搜索 PATH，需要手动解析
+    private static string ResolveExecutablePath(string exeName)
+    {
+        // 已经是完整路径
+        if (Path.IsPathRooted(exeName) && File.Exists(exeName))
+            return exeName;
+
+        try
+        {
+            var cmdExe = OperatingSystem.IsWindows() ? "where" : "which";
+            var psi = new ProcessStartInfo
+            {
+                FileName = cmdExe,
+                Arguments = exeName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc != null)
+            {
+                proc.WaitForExit(5000);
+                var path = proc.StandardOutput.ReadLine()?.Trim();
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                    return path;
+            }
+        }
+        catch { }
+
+        return exeName; // 回退到原始名称
+    }
+
     /// <summary>
     /// 检查训练环境是否就绪
     /// </summary>
@@ -46,9 +80,10 @@ public class TrainingService
         {
             try
             {
+                var resolvedExe = ResolveExecutablePath(exe);
                 var psi = new ProcessStartInfo
                 {
-                    FileName = exe,
+                    FileName = resolvedExe,
                     Arguments = "--version",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -103,41 +138,43 @@ public class TrainingService
             messages.Add("○ 字典文件: 未找到（rec 模式必须手动指定）");
 
         // 5. 检查 paddlepaddle 包
-        try
+        if (pythonExe != null)
         {
-            var psi = new ProcessStartInfo
+            try
             {
-                FileName = pythonExe,
-                Arguments = "-c \"import paddle; print(paddle.__version__)\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc != null)
-            {
-                proc.WaitForExit(10000);
-                var paddleVersion = proc.StandardOutput.ReadToEnd().Trim();
-                if (!string.IsNullOrEmpty(paddleVersion))
+                var psi = new ProcessStartInfo
                 {
-                    messages.Add($"✓ PaddlePaddle: {paddleVersion}");
-                }
-                else
+                    FileName = ResolveExecutablePath(pythonExe),
+                    Arguments = "-c \"import paddle; print(paddle.__version__)\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc != null)
                 {
-                    var err = proc.StandardError.ReadToEnd().Trim();
-                    messages.Add("✗ PaddlePaddle: 未安装");
-                    return (false,
-                        string.Join("\n", messages) + "\n\n" +
-                        "未检测到 PaddlePaddle 包。\n" +
-                        "请安装: pip install paddlepaddle\n" +
-                        "(GPU 版本: pip install paddlepaddle-gpu)");
+                    proc.WaitForExit(10000);
+                    var paddleVersion = proc.StandardOutput.ReadToEnd().Trim();
+                    if (!string.IsNullOrEmpty(paddleVersion))
+                    {
+                        messages.Add($"✓ PaddlePaddle: {paddleVersion}");
+                    }
+                    else
+                    {
+                        messages.Add("✗ PaddlePaddle: 未安装");
+                        return (false,
+                            string.Join("\n", messages) + "\n\n" +
+                            "未检测到 PaddlePaddle 包。\n" +
+                            "请安装: pip install paddlepaddle\n" +
+                            "(GPU 版本: pip install paddlepaddle-gpu)");
+                    }
                 }
             }
-        }
-        catch
-        {
-            messages.Add("? PaddlePaddle: 检查失败");
+            catch
+            {
+                messages.Add("? PaddlePaddle: 检查失败");
+            }
         }
 
         return (true, string.Join("\n", messages));
@@ -318,32 +355,13 @@ public class TrainingService
             log.AppendLine($"[{step}] {detail}");
         }
 
-        // ── 辅助：启动进程（Windows 上用 cmd /c 确保 PATH 搜索）──
+        // ── 辅助：启动进程（自动解析可执行文件完整路径）──
         ProcessStartInfo CreateCmd(string fileName, string arguments, string? workingDir = null)
         {
-            // Windows 上 git/python 可能不在直接 PATH 中，用 cmd /c 确保能找到
-            if (isWindows && !fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            {
-                // 已经是完整路径的直接用，否则用 cmd /c
-                if (!Path.IsPathRooted(fileName) && !File.Exists(fileName))
-                {
-                    return new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c {fileName} {arguments}",
-                        WorkingDirectory = workingDir ?? Environment.CurrentDirectory,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        StandardOutputEncoding = System.Text.Encoding.UTF8,
-                        StandardErrorEncoding = System.Text.Encoding.UTF8
-                    };
-                }
-            }
+            var resolvedPath = ResolveExecutablePath(fileName);
             return new ProcessStartInfo
             {
-                FileName = fileName,
+                FileName = resolvedPath,
                 Arguments = arguments,
                 WorkingDirectory = workingDir ?? Environment.CurrentDirectory,
                 RedirectStandardOutput = true,
@@ -776,56 +794,61 @@ public class TrainingService
         if (!File.Exists(trainPy))
             return null;
 
+        // 用 where/which 找到 python 完整路径（UseShellExecute=false 不搜索 PATH）
+        string pythonExe;
+        try
+        {
+            var cmdExe = OperatingSystem.IsWindows() ? "where" : "which";
+            var psi = new ProcessStartInfo
+            {
+                FileName = cmdExe,
+                Arguments = "python",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc != null)
+            {
+                proc.WaitForExit(5000);
+                var path = proc.StandardOutput.ReadLine()?.Trim();
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                    pythonExe = path;
+                else
+                    pythonExe = "python"; // 回退
+            }
+            else
+            {
+                pythonExe = "python";
+            }
+        }
+        catch
+        {
+            pythonExe = "python";
+        }
+
         var gpuArgs = config.Device == TrainingDevice.GPU
             ? $"--gpus {config.GpuDeviceId}"
             : "--use_gpu false";
 
-        var isWindows = OperatingSystem.IsWindows();
-        ProcessStartInfo psi;
-
-        if (isWindows)
+        var startInfo = new ProcessStartInfo
         {
-            // Windows 上用 cmd /c 确保 python 能被 PATH 找到
-            psi = new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/c python -u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
-                WorkingDirectory = paddleocrDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8
-            };
-        }
-        else
-        {
-            psi = new ProcessStartInfo
-            {
-                FileName = "python",
-                Arguments = $"-u {trainPy} -c {configPath} {gpuArgs}",
-                WorkingDirectory = paddleocrDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8
-            };
-        }
+            FileName = pythonExe,
+            Arguments = $"-u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
+            WorkingDirectory = paddleocrDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8
+        };
 
         try
         {
-            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var proc = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             proc.Start();
-
-            // 将错误输出合并到标准输出流
-            proc.ErrorDataReceived += (_, e) =>
-            {
-                // 错误数据会通过 StandardError 读取，不合并
-            };
-
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
             return proc;
