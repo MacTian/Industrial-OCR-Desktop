@@ -8,18 +8,75 @@ namespace PaddleOcrDesktop.Services;
 
 public class TrainingService
 {
+    // ── Windows 常见安装路径 ──
+    private static readonly string[] GitCommonPaths = new[]
+    {
+        @"C:\Program Files\Git\cmd\git.exe",
+        @"C:\Program Files (x86)\Git\cmd\git.exe",
+        @"C:\Git\cmd\git.exe",
+    };
+
+    private static readonly string[] PythonCommonPaths = new[]
+    {
+        @"C:\Python312\python.exe",
+        @"C:\Python311\python.exe",
+        @"C:\Python310\python.exe",
+        @"C:\Python39\python.exe",
+        @"C:\Python38\python.exe",
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python312", "python.exe"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python311", "python.exe"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python310", "python.exe"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python39", "python.exe"),
+    };
+
+    // ── 解析可执行文件路径（Windows 上尝试常见安装位置）──
+    private static string ResolveExe(string cmd, string[] commonPaths)
+    {
+        // 如果 cmd 已经是 .exe 结尾且存在，直接返回
+        if (cmd.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(cmd))
+            return cmd;
+
+        // 尝试常见路径
+        foreach (var path in commonPaths)
+        {
+            if (File.Exists(path))
+                return path;
+        }
+
+        return cmd; // 回退原始命令
+    }
+
     // ── 辅助：通过 shell 执行命令，返回 stdout+stderr 合并输出 ──
     // 用 cmd.exe(Windows) 或 bash(Linux/Mac) 包装，自动搜索 PATH
     private static string RunShellCommand(string command, int timeoutMs = 30000)
     {
         var isWin = OperatingSystem.IsWindows();
+
+        // Windows 上解析 git/python 常见安装路径
+        if (isWin)
+        {
+            var firstSpace = command.IndexOf(' ');
+            var exeName = firstSpace > 0 ? command.Substring(0, firstSpace) : command;
+            var args = firstSpace > 0 ? command.Substring(firstSpace) : "";
+
+            if (exeName.Equals("git", StringComparison.OrdinalIgnoreCase))
+            {
+                var resolved = ResolveExe(exeName, GitCommonPaths);
+                if (resolved != exeName) command = resolved + args;
+            }
+            else if (exeName.Equals("python", StringComparison.OrdinalIgnoreCase) || exeName.Equals("python3", StringComparison.OrdinalIgnoreCase))
+            {
+                var resolved = ResolveExe(exeName, PythonCommonPaths);
+                if (resolved != exeName) command = resolved + args;
+            }
+        }
+
         var tempOut = Path.GetTempFileName();
         var tempErr = Path.GetTempFileName();
         try
         {
             if (isWin)
             {
-                // 写临时批处理文件，用 cmd.exe /c 执行
                 var batFile = Path.GetTempFileName() + ".bat";
                 File.WriteAllText(batFile, $"@echo off\r\n{command} > \"{tempOut}\" 2> \"{tempErr}\"\r\n");
                 var psi = new ProcessStartInfo
@@ -360,6 +417,23 @@ public class TrainingService
         async Task<(int Code, string Out, string Err)> RunAsync(string cmd, string args, string? workDir = null, int timeoutMs = 600000)
         {
             System.Diagnostics.Debug.WriteLine($"[RunAsync] cmd={cmd}, args={args}, workDir={workDir}");
+
+            // Windows 上尝试解析常见安装路径
+            if (isWindows)
+            {
+                var resolvedCmd = cmd;
+                if (cmd.Equals("git", StringComparison.OrdinalIgnoreCase))
+                    resolvedCmd = ResolveExe(cmd, GitCommonPaths);
+                else if (cmd.Equals("python", StringComparison.OrdinalIgnoreCase) || cmd.Equals("python3", StringComparison.OrdinalIgnoreCase))
+                    resolvedCmd = ResolveExe(cmd, PythonCommonPaths);
+
+                if (resolvedCmd != cmd)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[RunAsync] resolved '{cmd}' -> '{resolvedCmd}'");
+                    cmd = resolvedCmd;
+                }
+            }
+
             var tempOut = Path.GetTempFileName();
             var tempErr = Path.GetTempFileName();
             try
@@ -774,6 +848,15 @@ public class TrainingService
             : "--use_gpu false";
 
         var isWin = OperatingSystem.IsWindows();
+
+        // Windows 上解析 python 路径
+        var pythonCmd = "python";
+        if (isWin)
+        {
+            var resolved = ResolveExe("python", PythonCommonPaths);
+            if (resolved != "python") pythonCmd = resolved;
+        }
+
         ProcessStartInfo psi;
 
         if (isWin)
@@ -782,7 +865,7 @@ public class TrainingService
             psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = $"/c python -u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
+                Arguments = $"/c {pythonCmd} -u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
                 WorkingDirectory = paddleocrDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
