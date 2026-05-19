@@ -19,12 +19,13 @@ public class TrainingService
         {
             if (isWin)
             {
-                // 写临时批处理文件避免 cmd.exe 引号转义问题
+                // 写临时批处理文件，用 cmd.exe /c 执行
                 var batFile = Path.GetTempFileName() + ".bat";
                 File.WriteAllText(batFile, $"@echo off\r\n{command} > \"{tempOut}\" 2> \"{tempErr}\"\r\n");
                 var psi = new ProcessStartInfo
                 {
-                    FileName = batFile,
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"{batFile}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
@@ -358,15 +359,15 @@ public class TrainingService
             {
                 if (isWindows)
                 {
-                    // Windows: 写一个临时批处理文件来避免 cmd.exe 引号转义问题
+                    // Windows: 写临时批处理文件，用 cmd.exe /c 执行
                     var batFile = Path.GetTempFileName() + ".bat";
-                    // 批处理内容：执行命令并将输出重定向到临时文件
                     var batContent = $"@echo off\r\n{cmd} {args} > \"{tempOut}\" 2> \"{tempErr}\"\r\n";
                     await File.WriteAllTextAsync(batFile, batContent);
 
                     var psi = new ProcessStartInfo
                     {
-                        FileName = batFile,
+                        FileName = "cmd.exe",
+                        Arguments = $"/c \"{batFile}\"",
                         WorkingDirectory = workDir ?? Environment.CurrentDirectory,
                         UseShellExecute = false,
                         CreateNoWindow = true
