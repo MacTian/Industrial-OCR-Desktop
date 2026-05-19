@@ -8,6 +8,61 @@ namespace PaddleOcrDesktop.Services;
 
 public class TrainingService
 {
+    // ── 辅助：通过 shell 执行命令，返回 stdout+stderr 合并输出 ──
+    // 用 cmd.exe(Windows) 或 bash(Linux/Mac) 包装，自动搜索 PATH
+    private static string RunShellCommand(string command, int timeoutMs = 30000)
+    {
+        var isWin = OperatingSystem.IsWindows();
+        var tempOut = Path.GetTempFileName();
+        var tempErr = Path.GetTempFileName();
+        try
+        {
+            if (isWin)
+            {
+                // 写临时批处理文件避免 cmd.exe 引号转义问题
+                var batFile = Path.GetTempFileName() + ".bat";
+                File.WriteAllText(batFile, $"@echo off\r\n{command} > \"{tempOut}\" 2> \"{tempErr}\"\r\n");
+                var psi = new ProcessStartInfo
+                {
+                    FileName = batFile,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc == null) return "";
+                proc.WaitForExit(timeoutMs);
+                try { File.Delete(batFile); } catch { }
+            }
+            else
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "/bin/bash",
+                    Arguments = $"-c \"{command}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc == null) return "";
+                proc.WaitForExit(timeoutMs);
+                var output = proc.StandardOutput.ReadToEnd();
+                var error = proc.StandardError.ReadToEnd();
+                return (output + "\n" + error).Trim();
+            }
+
+            var stdout = File.Exists(tempOut) ? File.ReadAllText(tempOut).Trim() : "";
+            var stderr = File.Exists(tempErr) ? File.ReadAllText(tempErr).Trim() : "";
+            return (stdout + "\n" + stderr).Trim();
+        }
+        finally
+        {
+            try { File.Delete(tempOut); } catch { }
+            try { File.Delete(tempErr); } catch { }
+        }
+    }
+
     /// <summary>
     /// 检查训练环境是否就绪
     /// </summary>
@@ -47,28 +102,7 @@ public class TrainingService
         {
             try
             {
-                var tempOut = Path.GetTempFileName();
-                var tempErr = Path.GetTempFileName();
-                var shellExe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash";
-                var shellArgs = OperatingSystem.IsWindows()
-                    ? $"/c {exe} --version > \"{tempOut}\" 2> \"{tempErr}\""
-                    : $"-c \"{exe} --version\" > \"{tempOut}\" 2> \"{tempErr}\"";
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = shellExe,
-                    Arguments = shellArgs,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                if (proc == null) continue;
-                proc.WaitForExit(5000);
-                var version = File.ReadAllText(tempOut).Trim();
-                if (string.IsNullOrEmpty(version))
-                    version = File.ReadAllText(tempErr).Trim();
-                try { File.Delete(tempOut); } catch { }
-                try { File.Delete(tempErr); } catch { }
+                var version = RunShellCommand($"{exe} --version");
                 if (!string.IsNullOrEmpty(version))
                 {
                     pythonExe = exe;
@@ -110,45 +144,24 @@ public class TrainingService
         else
             messages.Add("○ 字典文件: 未找到（rec 模式必须手动指定）");
 
-        // 5. 检查 paddlepaddle 包（用 cmd /c 包装让系统搜索 PATH）
+        // 5. 检查 paddlepaddle 包
         if (pythonExe != null)
         {
             try
             {
-                var tempOut = Path.GetTempFileName();
-                var tempErr = Path.GetTempFileName();
-                var shellExe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash";
-                var shellArgs = OperatingSystem.IsWindows()
-                    ? $"/c {pythonExe} -c \"import paddle; print(paddle.__version__)\" > \"{tempOut}\" 2> \"{tempErr}\""
-                    : $"-c \"{pythonExe} -c 'import paddle; print(paddle.__version__)'\" > \"{tempOut}\" 2> \"{tempErr}\"";
-                var psi = new ProcessStartInfo
+                var paddleVersion = RunShellCommand($"{pythonExe} -c \"import paddle; print(paddle.__version__)\"");
+                if (!string.IsNullOrEmpty(paddleVersion))
                 {
-                    FileName = shellExe,
-                    Arguments = shellArgs,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                if (proc != null)
+                    messages.Add($"✓ PaddlePaddle: {paddleVersion}");
+                }
+                else
                 {
-                    proc.WaitForExit(30000);
-                    var paddleVersion = File.ReadAllText(tempOut).Trim();
-                    try { File.Delete(tempOut); } catch { }
-                    try { File.Delete(tempErr); } catch { }
-                    if (!string.IsNullOrEmpty(paddleVersion))
-                    {
-                        messages.Add($"✓ PaddlePaddle: {paddleVersion}");
-                    }
-                    else
-                    {
-                        var err = File.ReadAllText(tempErr).Trim();
-                        messages.Add("✗ PaddlePaddle: 未安装");
-                        return (false,
-                            string.Join("\n", messages) + "\n\n" +
-                            "未检测到 PaddlePaddle 包。\n" +
-                            "请安装: pip install paddlepaddle\n" +
-                            "(GPU 版本: pip install paddlepaddle-gpu)");
-                    }
+                    messages.Add("✗ PaddlePaddle: 未安装");
+                    return (false,
+                        string.Join("\n", messages) + "\n\n" +
+                        "未检测到 PaddlePaddle 包。\n" +
+                        "请安装: pip install paddlepaddle\n" +
+                        "(GPU 版本: pip install paddlepaddle-gpu)");
                 }
             }
             catch
@@ -336,45 +349,66 @@ public class TrainingService
         }
 
         // ── 辅助：运行命令并返回 (exitCode, stdout, stderr) ──
-        // 使用 cmd.exe /c 包装，让系统自动搜索 PATH
+        // 使用 cmd.exe /c 包装让系统搜索 PATH，输出重定向到临时文件
         async Task<(int Code, string Out, string Err)> RunAsync(string cmd, string args, string? workDir = null, int timeoutMs = 600000)
         {
             var tempOut = Path.GetTempFileName();
             var tempErr = Path.GetTempFileName();
             try
             {
-                string shellArgs;
                 if (isWindows)
                 {
-                    // cmd /c 自动搜索 PATH；> 和 2> 重定向到临时文件
-                    shellArgs = $"/c {cmd} {args} > \"{tempOut}\" 2> \"{tempErr}\"";
+                    // Windows: 写一个临时批处理文件来避免 cmd.exe 引号转义问题
+                    var batFile = Path.GetTempFileName() + ".bat";
+                    // 批处理内容：执行命令并将输出重定向到临时文件
+                    var batContent = $"@echo off\r\n{cmd} {args} > \"{tempOut}\" 2> \"{tempErr}\"\r\n";
+                    await File.WriteAllTextAsync(batFile, batContent);
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = batFile,
+                        WorkingDirectory = workDir ?? Environment.CurrentDirectory,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    using var proc = Process.Start(psi);
+                    if (proc == null)
+                        return (-1, "", $"无法启动: {cmd}");
+
+                    await proc.WaitForExitAsync();
+                    try { File.Delete(batFile); } catch { }
+
+                    var output = File.Exists(tempOut) ? await File.ReadAllTextAsync(tempOut) : "";
+                    var error = File.Exists(tempErr) ? await File.ReadAllTextAsync(tempErr) : "";
+                    return (proc.ExitCode, output, error);
                 }
                 else
                 {
-                    shellArgs = $"-c \"{cmd} {args}\" > \"{tempOut}\" 2> \"{tempErr}\"";
+                    // Linux/Mac: 用 bash -c，命令 + 重定向放在同一字符串中
+                    var fullCmd = $"{cmd} {args}";
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "/bin/bash",
+                        Arguments = $"-c \"{fullCmd}\"",
+                        WorkingDirectory = workDir ?? Environment.CurrentDirectory,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+
+                    using var proc = Process.Start(psi);
+                    if (proc == null)
+                        return (-1, "", $"无法启动: {cmd}");
+
+                    var outputTask = proc.StandardOutput.ReadToEndAsync();
+                    var errorTask = proc.StandardError.ReadToEndAsync();
+                    await proc.WaitForExitAsync();
+                    var output = await outputTask;
+                    var error = await errorTask;
+                    return (proc.ExitCode, output, error);
                 }
-
-                var shellExe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash";
-                var psi = new ProcessStartInfo
-                {
-                    FileName = shellExe,
-                    Arguments = shellArgs,
-                    WorkingDirectory = workDir ?? Environment.CurrentDirectory,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = false,
-                    RedirectStandardError = false
-                };
-
-                using var proc = Process.Start(psi);
-                if (proc == null)
-                    return (-1, "", $"无法启动: {cmd}");
-
-                await proc.WaitForExitAsync();
-
-                var output = File.Exists(tempOut) ? await File.ReadAllTextAsync(tempOut) : "";
-                var error = File.Exists(tempErr) ? await File.ReadAllTextAsync(tempErr) : "";
-                return (proc.ExitCode, output, error);
             }
             finally
             {
