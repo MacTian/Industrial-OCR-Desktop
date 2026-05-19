@@ -78,7 +78,17 @@ public class TrainingService
             if (isWin)
             {
                 var batFile = Path.GetTempFileName() + ".bat";
-                File.WriteAllText(batFile, $"@echo off\r\n{command} > \"{tempOut}\" 2> \"{tempErr}\"\r\n");
+                // 如果命令路径包含空格（如 C:\Program Files\...），需要加引号
+                var quotedCommand = command;
+                var firstSpace = command.IndexOf(' ');
+                if (firstSpace > 0)
+                {
+                    var exe = command.Substring(0, firstSpace);
+                    var rest = command.Substring(firstSpace);
+                    if (exe.Contains(' ') && !exe.StartsWith("\""))
+                        quotedCommand = $"\"{exe}\"{rest}";
+                }
+                File.WriteAllText(batFile, $"@echo off\r\n{quotedCommand} > \"{tempOut}\" 2> \"{tempErr}\"\r\n");
                 var psi = new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
@@ -441,7 +451,7 @@ public class TrainingService
                 if (isWindows)
                 {
                     var batFile = Path.GetTempFileName() + ".bat";
-                    var batContent = $"@echo off\r\n{cmd} {args} > \"{tempOut}\" 2> \"{tempErr}\"\r\n";
+                    var batContent = $"@echo off\r\n\"{cmd}\" {args} > \"{tempOut}\" 2> \"{tempErr}\"\r\n";
                     await File.WriteAllTextAsync(batFile, batContent);
                     System.Diagnostics.Debug.WriteLine($"[RunAsync] batFile={batFile}");
                     System.Diagnostics.Debug.WriteLine($"[RunAsync] batContent={batContent.Trim()}");
