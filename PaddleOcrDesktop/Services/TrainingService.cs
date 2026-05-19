@@ -8,40 +8,6 @@ namespace PaddleOcrDesktop.Services;
 
 public class TrainingService
 {
-    // ── 辅助：用 where/which 解析可执行文件完整路径 ──
-    // UseShellExecute=false 时 Process.Start 不搜索 PATH，需要手动解析
-    private static string ResolveExecutablePath(string exeName)
-    {
-        // 已经是完整路径
-        if (Path.IsPathRooted(exeName) && File.Exists(exeName))
-            return exeName;
-
-        try
-        {
-            var cmdExe = OperatingSystem.IsWindows() ? "where" : "which";
-            var psi = new ProcessStartInfo
-            {
-                FileName = cmdExe,
-                Arguments = exeName,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc != null)
-            {
-                proc.WaitForExit(5000);
-                var path = proc.StandardOutput.ReadLine()?.Trim();
-                if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                    return path;
-            }
-        }
-        catch { }
-
-        return exeName; // 回退到原始名称
-    }
-
     /// <summary>
     /// 检查训练环境是否就绪
     /// </summary>
@@ -73,6 +39,7 @@ public class TrainingService
         messages.Add($"✓ 训练脚本: tools/train.py");
 
         // 2. 检查 Python 环境（尝试 python 和 python3）
+        // 用 cmd /c 包装让系统搜索 PATH，避免 Win32Exception
         string? pythonExe = null;
         string? pythonVersion = null;
 
@@ -80,22 +47,28 @@ public class TrainingService
         {
             try
             {
-                var resolvedExe = ResolveExecutablePath(exe);
+                var tempOut = Path.GetTempFileName();
+                var tempErr = Path.GetTempFileName();
+                var shellExe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash";
+                var shellArgs = OperatingSystem.IsWindows()
+                    ? $"/c {exe} --version > \"{tempOut}\" 2> \"{tempErr}\""
+                    : $"-c \"{exe} --version\" > \"{tempOut}\" 2> \"{tempErr}\"";
+
                 var psi = new ProcessStartInfo
                 {
-                    FileName = resolvedExe,
-                    Arguments = "--version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
+                    FileName = shellExe,
+                    Arguments = shellArgs,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
                 using var proc = Process.Start(psi);
                 if (proc == null) continue;
                 proc.WaitForExit(5000);
-                var version = proc.StandardOutput.ReadToEnd().Trim();
+                var version = File.ReadAllText(tempOut).Trim();
                 if (string.IsNullOrEmpty(version))
-                    version = proc.StandardError.ReadToEnd().Trim(); // Python 2 prints to stderr
+                    version = File.ReadAllText(tempErr).Trim();
+                try { File.Delete(tempOut); } catch { }
+                try { File.Delete(tempErr); } catch { }
                 if (!string.IsNullOrEmpty(version))
                 {
                     pythonExe = exe;
@@ -137,31 +110,38 @@ public class TrainingService
         else
             messages.Add("○ 字典文件: 未找到（rec 模式必须手动指定）");
 
-        // 5. 检查 paddlepaddle 包
+        // 5. 检查 paddlepaddle 包（用 cmd /c 包装让系统搜索 PATH）
         if (pythonExe != null)
         {
             try
             {
+                var tempOut = Path.GetTempFileName();
+                var tempErr = Path.GetTempFileName();
+                var shellExe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash";
+                var shellArgs = OperatingSystem.IsWindows()
+                    ? $"/c {pythonExe} -c \"import paddle; print(paddle.__version__)\" > \"{tempOut}\" 2> \"{tempErr}\""
+                    : $"-c \"{pythonExe} -c 'import paddle; print(paddle.__version__)'\" > \"{tempOut}\" 2> \"{tempErr}\"";
                 var psi = new ProcessStartInfo
                 {
-                    FileName = ResolveExecutablePath(pythonExe),
-                    Arguments = "-c \"import paddle; print(paddle.__version__)\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
+                    FileName = shellExe,
+                    Arguments = shellArgs,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
                 using var proc = Process.Start(psi);
                 if (proc != null)
                 {
-                    proc.WaitForExit(10000);
-                    var paddleVersion = proc.StandardOutput.ReadToEnd().Trim();
+                    proc.WaitForExit(30000);
+                    var paddleVersion = File.ReadAllText(tempOut).Trim();
+                    try { File.Delete(tempOut); } catch { }
+                    try { File.Delete(tempErr); } catch { }
                     if (!string.IsNullOrEmpty(paddleVersion))
                     {
                         messages.Add($"✓ PaddlePaddle: {paddleVersion}");
                     }
                     else
                     {
+                        var err = File.ReadAllText(tempErr).Trim();
                         messages.Add("✗ PaddlePaddle: 未安装");
                         return (false,
                             string.Join("\n", messages) + "\n\n" +
@@ -355,22 +335,52 @@ public class TrainingService
             log.AppendLine($"[{step}] {detail}");
         }
 
-        // ── 辅助：启动进程（自动解析可执行文件完整路径）──
-        ProcessStartInfo CreateCmd(string fileName, string arguments, string? workingDir = null)
+        // ── 辅助：运行命令并返回 (exitCode, stdout, stderr) ──
+        // 使用 cmd.exe /c 包装，让系统自动搜索 PATH
+        async Task<(int Code, string Out, string Err)> RunAsync(string cmd, string args, string? workDir = null, int timeoutMs = 600000)
         {
-            var resolvedPath = ResolveExecutablePath(fileName);
-            return new ProcessStartInfo
+            var tempOut = Path.GetTempFileName();
+            var tempErr = Path.GetTempFileName();
+            try
             {
-                FileName = resolvedPath,
-                Arguments = arguments,
-                WorkingDirectory = workingDir ?? Environment.CurrentDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8
-            };
+                string shellArgs;
+                if (isWindows)
+                {
+                    // cmd /c 自动搜索 PATH；> 和 2> 重定向到临时文件
+                    shellArgs = $"/c {cmd} {args} > \"{tempOut}\" 2> \"{tempErr}\"";
+                }
+                else
+                {
+                    shellArgs = $"-c \"{cmd} {args}\" > \"{tempOut}\" 2> \"{tempErr}\"";
+                }
+
+                var shellExe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash";
+                var psi = new ProcessStartInfo
+                {
+                    FileName = shellExe,
+                    Arguments = shellArgs,
+                    WorkingDirectory = workDir ?? Environment.CurrentDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false
+                };
+
+                using var proc = Process.Start(psi);
+                if (proc == null)
+                    return (-1, "", $"无法启动: {cmd}");
+
+                await proc.WaitForExitAsync();
+
+                var output = File.Exists(tempOut) ? await File.ReadAllTextAsync(tempOut) : "";
+                var error = File.Exists(tempErr) ? await File.ReadAllTextAsync(tempErr) : "";
+                return (proc.ExitCode, output, error);
+            }
+            finally
+            {
+                try { File.Delete(tempOut); } catch { }
+                try { File.Delete(tempErr); } catch { }
+            }
         }
 
         // ── 辅助：解压 tar 文件（跨平台）──
@@ -378,45 +388,16 @@ public class TrainingService
         {
             try
             {
-                // 优先使用系统 tar 命令
-                if (isWindows)
-                {
-                    try
-                    {
-                        var psi = CreateCmd("tar.exe", $"-xf \"{tarPath}\" -C \"{destDir}\"");
-                        using var proc = Process.Start(psi);
-                        if (proc != null)
-                        {
-                            await proc.WaitForExitAsync();
-                            if (proc.ExitCode == 0) return true;
-                        }
-                    }
-                    catch { /* tar.exe 不可用，继续回退 */ }
-                }
-                else
-                {
-                    try
-                    {
-                        var psi = CreateCmd("tar", $"-xf \"{tarPath}\" -C \"{destDir}\"");
-                        using var proc = Process.Start(psi);
-                        if (proc != null)
-                        {
-                            await proc.WaitForExitAsync();
-                            if (proc.ExitCode == 0) return true;
-                        }
-                    }
-                    catch { /* tar 不可用，继续回退 */ }
-                }
+                var tarExe = isWindows ? "tar.exe" : "tar";
+                var (code, _, err) = await RunAsync(tarExe, $"-xf \"{tarPath}\" -C \"{destDir}\"", destDir);
+                if (code == 0) return true;
+                Report("解压", $"系统 tar 失败: {err}", true);
+            }
+            catch { }
 
-                // 回退：使用 .NET 内置 System.Formats.Tar（.NET 7+）
-                Report("解压", "使用 .NET 内置 TarReader 解压...");
-                return await ExtractTarManagedAsync(tarPath, destDir);
-            }
-            catch (Exception ex)
-            {
-                Report("解压", $"解压失败: {ex.Message}", true);
-            }
-            return false;
+            // 回退：使用 .NET 内置 System.Formats.Tar
+            Report("解压", "使用 .NET 内置 TarReader 解压...");
+            return await ExtractTarManagedAsync(tarPath, destDir);
         }
 
         // ── Step 1: 检查/克隆 PaddleOCR ──
@@ -424,39 +405,28 @@ public class TrainingService
         if (string.IsNullOrEmpty(paddleocrDir) || !Directory.Exists(paddleocrDir))
         {
             Report("1/6", "PaddleOCR 目录不存在，尝试自动克隆...");
+            var parentDir = Path.GetDirectoryName(paddleocrDir);
+            if (string.IsNullOrEmpty(parentDir) || !Directory.Exists(parentDir))
+            {
+                Report("1/6", $"父目录不存在: {parentDir}", true);
+                return (false, log.ToString());
+            }
+
             try
             {
-                var parentDir = Path.GetDirectoryName(paddleocrDir);
-                if (string.IsNullOrEmpty(parentDir) || !Directory.Exists(parentDir))
+                var (code, output, err) = await RunAsync("git", $"clone https://github.com/PaddlePaddle/PaddleOCR.git \"{paddleocrDir}\"", parentDir);
+                if (code != 0)
                 {
-                    Report("1/6", $"父目录不存在: {parentDir}", true);
-                    return (false, log.ToString());
-                }
-
-                var psi = CreateCmd("git", $"clone https://github.com/PaddlePaddle/PaddleOCR.git \"{paddleocrDir}\"", parentDir);
-                using var proc = Process.Start(psi);
-                if (proc == null)
-                {
-                    Report("1/6", "无法启动 git 进程。请确认 Git 已安装并加入 PATH。", true);
-                    Report("1/6", "下载地址: https://git-scm.com/downloads", true);
-                    return (false, log.ToString());
-                }
-                await proc.WaitForExitAsync();
-                if (proc.ExitCode != 0)
-                {
-                    var err = await proc.StandardError.ReadToEndAsync();
-                    Report("1/6", $"git clone 失败: {err}", true);
+                    Report("1/6", $"git clone 失败 (exit {code}): {err}", true);
+                    if (err.Contains("not found") || err.Contains("不是内部或外部命令"))
+                        Report("1/6", "Git 未安装或未加入 PATH。下载地址: https://git-scm.com/downloads", true);
                     return (false, log.ToString());
                 }
                 Report("1/6", $"✓ PaddleOCR 已克隆到: {paddleocrDir}");
             }
             catch (Exception ex)
             {
-                Report("1/6", $"克隆失败: {ex.Message}", true);
-                if (ex is System.ComponentModel.Win32Exception)
-                {
-                    Report("1/6", "提示: 请确认 Git 已安装并加入 PATH", true);
-                }
+                Report("1/6", $"克隆异常: {ex.GetType().Name}: {ex.Message}", true);
                 return (false, log.ToString());
             }
         }
@@ -478,25 +448,20 @@ public class TrainingService
         {
             try
             {
-                var psi = CreateCmd(exe, "--version");
-                using var proc = Process.Start(psi);
-                if (proc == null) continue;
-                await proc.WaitForExitAsync();
-                var ver = (await proc.StandardOutput.ReadToEndAsync()).Trim();
-                if (string.IsNullOrEmpty(ver))
-                    ver = (await proc.StandardError.ReadToEndAsync()).Trim();
-                if (!string.IsNullOrEmpty(ver))
+                var (code, output, err) = await RunAsync(exe, "--version");
+                var ver = (output + err).Trim(); // python --version 输出到 stdout 或 stderr
+                if (code == 0 && !string.IsNullOrEmpty(ver))
                 {
                     pythonExe = exe;
                     Report("2/6", $"✓ {ver} ({exe})");
                     break;
                 }
+                Report("2/6", $"尝试 {exe}: exit={code}, output='{output}', err='{err}'");
             }
-            catch (System.ComponentModel.Win32Exception)
+            catch (Exception ex)
             {
-                // 命令不存在，继续尝试下一个
+                Report("2/6", $"尝试 {exe} 异常: {ex.GetType().Name}: {ex.Message}");
             }
-            catch { }
         }
         if (pythonExe == null)
         {
@@ -512,51 +477,30 @@ public class TrainingService
             Report("3/6", "检查 PaddlePaddle...");
             try
             {
-                var psi = CreateCmd(pythonExe, "-c \"import paddle; print(paddle.__version__)\"");
-                using var proc = Process.Start(psi);
-                if (proc != null)
+                var (code, output, _) = await RunAsync(pythonExe, "-c \"import paddle; print(paddle.__version__)\"", timeoutMs: 30000);
+                var ver = output.Trim();
+                if (code == 0 && !string.IsNullOrEmpty(ver))
                 {
-                    await proc.WaitForExitAsync();
-                    var ver = (await proc.StandardOutput.ReadToEndAsync()).Trim();
-                    if (!string.IsNullOrEmpty(ver))
-                    {
-                        Report("3/6", $"✓ PaddlePaddle {ver} 已安装");
-                    }
-                    else
-                    {
-                        var pkg = paddleCpu ? "paddlepaddle" : "paddlepaddle-gpu";
-                        var label = paddleCpu ? "CPU" : "GPU";
-                        Report("3/6", $"安装 PaddlePaddle ({label} 版本)...");
-                        Report("3/6", $"这可能需要几分钟，请耐心等待...");
-                        var pipPsi = CreateCmd(pythonExe, $"-m pip install {pkg} -i https://mirrors.aliyun.com/pypi/simple/");
-                        using var pipProc = Process.Start(pipPsi);
-                        if (pipProc != null)
-                        {
-                            var outputTask = Task.Run(async () =>
-                            {
-                                while (!pipProc.StandardOutput.EndOfStream)
-                                {
-                                    var line = await pipProc.StandardOutput.ReadLineAsync();
-                                    if (!string.IsNullOrWhiteSpace(line))
-                                        Report("3/6", $"  {line}");
-                                }
-                            });
-                            await pipProc.WaitForExitAsync();
-                            await outputTask;
-                            Report("3/6", pipProc.ExitCode == 0
-                                ? $"✓ PaddlePaddle ({label}) 安装成功"
-                                : $"✗ 安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
-                        }
-                        else
-                        {
-                            Report("3/6", "无法启动 pip 安装进程", true);
-                        }
-                    }
+                    Report("3/6", $"✓ PaddlePaddle {ver} 已安装");
+                }
+                else
+                {
+                    var pkg = paddleCpu ? "paddlepaddle" : "paddlepaddle-gpu";
+                    var label = paddleCpu ? "CPU" : "GPU";
+                    Report("3/6", $"安装 PaddlePaddle ({label} 版本)...");
+                    Report("3/6", "这可能需要几分钟，请耐心等待...");
+                    var (pipCode, pipOut, pipErr) = await RunAsync(pythonExe, $"-m pip install {pkg} -i https://mirrors.aliyun.com/pypi/simple/", timeoutMs: 600000);
+                    // 输出末尾几行日志
+                    var lines = pipOut.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(5);
+                    foreach (var l in lines) Report("3/6", $"  {l.Trim()}");
+                    Report("3/6", pipCode == 0
+                        ? $"✓ PaddlePaddle ({label}) 安装成功"
+                        : $"✗ 安装失败 (exit {pipCode}): {pipErr}", pipCode != 0);
                 }
             }
             catch (Exception ex)
             {
-                Report("3/6", $"检查/安装失败: {ex.Message}", true);
+                Report("3/6", $"检查/安装异常: {ex.GetType().Name}: {ex.Message}", true);
             }
         }
         else
@@ -573,33 +517,16 @@ public class TrainingService
             {
                 try
                 {
-                    var pipPsi = CreateCmd(pythonExe, $"-m pip install -r \"{reqFile}\" -i https://mirrors.aliyun.com/pypi/simple/", paddleocrDir);
-                    using var pipProc = Process.Start(pipPsi);
-                    if (pipProc != null)
-                    {
-                        var outputTask = Task.Run(async () =>
-                        {
-                            while (!pipProc.StandardOutput.EndOfStream)
-                            {
-                                var line = await pipProc.StandardOutput.ReadLineAsync();
-                                if (line != null)
-                                    Report("4/6", $"  {line}");
-                            }
-                        });
-                        await pipProc.WaitForExitAsync();
-                        await outputTask;
-                        Report("4/6", pipProc.ExitCode == 0
-                            ? "✓ 依赖安装完成"
-                            : $"✗ 部分依赖安装失败 (exit {pipProc.ExitCode})", pipProc.ExitCode != 0);
-                    }
-                    else
-                    {
-                        Report("4/6", "无法启动 pip 安装进程", true);
-                    }
+                    var (code, pipOut, pipErr) = await RunAsync(pythonExe, $"-m pip install -r \"{reqFile}\" -i https://mirrors.aliyun.com/pypi/simple/", paddleocrDir, 600000);
+                    var lines = pipOut.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(5);
+                    foreach (var l in lines) Report("4/6", $"  {l.Trim()}");
+                    Report("4/6", code == 0
+                        ? "✓ 依赖安装完成"
+                        : $"✗ 部分依赖安装失败 (exit {code}): {pipErr}", code != 0);
                 }
                 catch (Exception ex)
                 {
-                    Report("4/6", $"安装失败: {ex.Message}", true);
+                    Report("4/6", $"安装异常: {ex.GetType().Name}: {ex.Message}", true);
                 }
             }
             else
@@ -794,60 +721,48 @@ public class TrainingService
         if (!File.Exists(trainPy))
             return null;
 
-        // 用 where/which 找到 python 完整路径（UseShellExecute=false 不搜索 PATH）
-        string pythonExe;
-        try
-        {
-            var cmdExe = OperatingSystem.IsWindows() ? "where" : "which";
-            var psi = new ProcessStartInfo
-            {
-                FileName = cmdExe,
-                Arguments = "python",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc != null)
-            {
-                proc.WaitForExit(5000);
-                var path = proc.StandardOutput.ReadLine()?.Trim();
-                if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                    pythonExe = path;
-                else
-                    pythonExe = "python"; // 回退
-            }
-            else
-            {
-                pythonExe = "python";
-            }
-        }
-        catch
-        {
-            pythonExe = "python";
-        }
-
         var gpuArgs = config.Device == TrainingDevice.GPU
             ? $"--gpus {config.GpuDeviceId}"
             : "--use_gpu false";
 
-        var startInfo = new ProcessStartInfo
+        var isWin = OperatingSystem.IsWindows();
+        ProcessStartInfo psi;
+
+        if (isWin)
         {
-            FileName = pythonExe,
-            Arguments = $"-u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
-            WorkingDirectory = paddleocrDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = System.Text.Encoding.UTF8,
-            StandardErrorEncoding = System.Text.Encoding.UTF8
-        };
+            // Windows: 用 cmd /c 包装让系统搜索 PATH，同时保持输出重定向
+            psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c python -u \"{trainPy}\" -c \"{configPath}\" {gpuArgs}",
+                WorkingDirectory = paddleocrDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+        }
+        else
+        {
+            psi = new ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = $"-u {trainPy} -c {configPath} {gpuArgs}",
+                WorkingDirectory = paddleocrDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+        }
 
         try
         {
-            var proc = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.Start();
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
