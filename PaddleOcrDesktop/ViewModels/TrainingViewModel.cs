@@ -180,7 +180,12 @@ public partial class TrainingViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanAutoConfigure))]
     private async Task AutoConfigure()
     {
-        if (IsConfiguring) return;
+        System.Diagnostics.Debug.WriteLine("========== AutoConfigure START ==========");
+        if (IsConfiguring)
+        {
+            System.Diagnostics.Debug.WriteLine("Already configuring, return");
+            return;
+        }
         IsConfiguring = true;
         var sb = new System.Text.StringBuilder();
         CurrentConfigureStep = "准备中...";
@@ -189,9 +194,11 @@ public partial class TrainingViewModel : ViewModelBase
         {
             sb.AppendLine("[1] AutoConfigure 启动");
             StatusMessage = "正在配置环境...";
+            System.Diagnostics.Debug.WriteLine("[1] AutoConfigure 启动");
 
             var progress = new Progress<(string Step, string Detail, bool IsError)>(item =>
             {
+                System.Diagnostics.Debug.WriteLine($"[PROGRESS] {item.Step}: {item.Detail} error={item.IsError}");
                 sb.AppendLine($"[{item.Step}] {item.Detail}");
                 if (item.IsError) sb.AppendLine("  ⚠ 错误");
                 CurrentConfigureStep = $"[{item.Step}] {item.Detail}";
@@ -200,6 +207,7 @@ public partial class TrainingViewModel : ViewModelBase
 
             sb.AppendLine("[2] 调用 AutoConfigureEnvironment");
             ConfigureLog = sb.ToString();
+            System.Diagnostics.Debug.WriteLine($"[2] 调用 AutoConfigureEnvironment, paddleocrDir={PaddleocrDir}");
 
             var (ok, log) = await _trainingService.AutoConfigureEnvironment(
                 PaddleocrDir, Config.Mode,
@@ -207,6 +215,7 @@ public partial class TrainingViewModel : ViewModelBase
                 ConfigureInstallPaddle, ConfigurePaddleCpu,
                 progress);
 
+            System.Diagnostics.Debug.WriteLine($"[3] AutoConfigureEnvironment returned ok={ok}");
             sb.AppendLine(log);
             sb.AppendLine($"[结果] ok={ok}");
             ConfigureLog = sb.ToString();
@@ -223,16 +232,19 @@ public partial class TrainingViewModel : ViewModelBase
 
                 CurrentConfigureStep = "✅ 配置完成";
                 StatusMessage = "环境自动配置完成";
+                System.Diagnostics.Debug.WriteLine("[4] 配置成功");
                 MessageBox.Show("环境配置完成！", "配置成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
                 CurrentConfigureStep = "❌ 配置失败";
                 StatusMessage = "环境配置失败，请查看日志";
+                System.Diagnostics.Debug.WriteLine("[4] 配置失败");
             }
         }
         catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[EXCEPTION] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             sb.AppendLine($"[异常] {ex.GetType().Name}: {ex.Message}");
             sb.AppendLine(ex.StackTrace ?? "");
             ConfigureLog = sb.ToString();
@@ -242,6 +254,7 @@ public partial class TrainingViewModel : ViewModelBase
         finally
         {
             IsConfiguring = false;
+            System.Diagnostics.Debug.WriteLine("========== AutoConfigure END ==========");
         }
     }
 

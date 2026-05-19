@@ -339,12 +339,18 @@ public class TrainingService
         bool paddleCpu,
         IProgress<(string Step, string Detail, bool IsError)>? progress = null)
     {
+        System.Diagnostics.Debug.WriteLine($"========== AutoConfigureEnvironment START ==========");
+        System.Diagnostics.Debug.WriteLine($"paddleocrDir={paddleocrDir}");
+        System.Diagnostics.Debug.WriteLine($"mode={mode}, downloadPretrained={downloadPretrained}, installDeps={installDeps}, installPaddle={installPaddle}, paddleCpu={paddleCpu}");
+        System.Diagnostics.Debug.WriteLine($"OS={Environment.OSVersion}, IsWindows={OperatingSystem.IsWindows()}");
+
         var log = new System.Text.StringBuilder();
         string? pythonExe = null;
         var isWindows = OperatingSystem.IsWindows();
 
         void Report(string step, string detail, bool isError = false)
         {
+            System.Diagnostics.Debug.WriteLine($"[Report] {step}: {detail} (error={isError})");
             progress?.Report((step, detail, isError));
             log.AppendLine($"[{step}] {detail}");
         }
@@ -353,16 +359,18 @@ public class TrainingService
         // 使用 cmd.exe /c 包装让系统搜索 PATH，输出重定向到临时文件
         async Task<(int Code, string Out, string Err)> RunAsync(string cmd, string args, string? workDir = null, int timeoutMs = 600000)
         {
+            System.Diagnostics.Debug.WriteLine($"[RunAsync] cmd={cmd}, args={args}, workDir={workDir}");
             var tempOut = Path.GetTempFileName();
             var tempErr = Path.GetTempFileName();
             try
             {
                 if (isWindows)
                 {
-                    // Windows: 写临时批处理文件，用 cmd.exe /c 执行
                     var batFile = Path.GetTempFileName() + ".bat";
                     var batContent = $"@echo off\r\n{cmd} {args} > \"{tempOut}\" 2> \"{tempErr}\"\r\n";
                     await File.WriteAllTextAsync(batFile, batContent);
+                    System.Diagnostics.Debug.WriteLine($"[RunAsync] batFile={batFile}");
+                    System.Diagnostics.Debug.WriteLine($"[RunAsync] batContent={batContent.Trim()}");
 
                     var psi = new ProcessStartInfo
                     {
@@ -375,13 +383,18 @@ public class TrainingService
 
                     using var proc = Process.Start(psi);
                     if (proc == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[RunAsync] Process.Start returned null for {cmd}");
                         return (-1, "", $"无法启动: {cmd}");
+                    }
 
                     await proc.WaitForExitAsync();
+                    System.Diagnostics.Debug.WriteLine($"[RunAsync] exitCode={proc.ExitCode}");
                     try { File.Delete(batFile); } catch { }
 
                     var output = File.Exists(tempOut) ? await File.ReadAllTextAsync(tempOut) : "";
                     var error = File.Exists(tempErr) ? await File.ReadAllTextAsync(tempErr) : "";
+                    System.Diagnostics.Debug.WriteLine($"[RunAsync] output={output.Trim()}, error={error.Trim()}");
                     return (proc.ExitCode, output, error);
                 }
                 else
