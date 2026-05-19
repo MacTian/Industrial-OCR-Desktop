@@ -187,15 +187,20 @@ public partial class TrainingViewModel : ViewModelBase
 
         try
         {
+            ConfigureLog = "[诊断] AutoConfigure 方法已启动\n";
+            CurrentConfigureStep = "正在配置...";
+
             var progress = new Progress<(string Step, string Detail, bool IsError)>(item =>
             {
-                CurrentConfigureStep = $"[{item.Step}]";
-                ConfigureLog += $"[{item.Step}] {item.Detail}\n";
+                CurrentConfigureStep = $"[{item.Step}] {item.Detail}";
+                ConfigureLog = ConfigureLog + $"[{item.Step}] {item.Detail}\n";
                 if (item.IsError)
                 {
-                    ConfigureLog += $"  ⚠ 错误\n";
+                    ConfigureLog = ConfigureLog + $"  ⚠ 错误\n";
                 }
             });
+
+            ConfigureLog = ConfigureLog + "[诊断] 调用 AutoConfigureEnvironment...\n";
 
             var (ok, log) = await _trainingService.AutoConfigureEnvironment(
                 PaddleocrDir,
@@ -206,7 +211,7 @@ public partial class TrainingViewModel : ViewModelBase
                 ConfigurePaddleCpu,
                 progress);
 
-            ConfigureLog = log;
+            ConfigureLog = log + $"\n[诊断] ok={ok}\n";
 
             if (ok)
             {
