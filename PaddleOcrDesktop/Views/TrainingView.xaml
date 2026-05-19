@@ -183,13 +183,12 @@
                                      Visibility="{Binding IsConfiguring, Converter={StaticResource BoolToVis}}"/>
                         <TextBlock Text="{Binding CurrentConfigureStep}" FontWeight="Bold" Margin="0,0,0,4"
                                    Visibility="{Binding IsConfiguring, Converter={StaticResource BoolToVis}}"/>
-                        <Expander Header="配置日志" IsExpanded="False"
-                                  Visibility="{Binding ConfigureLog, Converter={StaticResource EmptyToVis}}">
-                            <TextBox Text="{Binding ConfigureLog, Mode=OneWay}"
-                                     IsReadOnly="True" VerticalScrollBarVisibility="Auto"
-                                     MaxHeight="120" FontFamily="Consolas" FontSize="10"
-                                     TextWrapping="Wrap" Margin="0,4,0,0"/>
-                        </Expander>
+                        <TextBlock Text="配置日志：" FontWeight="SemiBold" Margin="0,4,0,2"/>
+                        <TextBox Text="{Binding ConfigureLog, Mode=OneWay}"
+                                 IsReadOnly="True" VerticalScrollBarVisibility="Auto"
+                                 Height="120" FontFamily="Consolas" FontSize="11"
+                                 TextWrapping="Wrap" Margin="0,0,0,4"
+                                 Background="#1E1E1E" Foreground="#D4D4D4"/>
                     </StackPanel>
                 </GroupBox>
 

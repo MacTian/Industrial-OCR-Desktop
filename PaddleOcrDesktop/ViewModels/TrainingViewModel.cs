@@ -182,40 +182,37 @@ public partial class TrainingViewModel : ViewModelBase
     {
         if (IsConfiguring) return;
         IsConfiguring = true;
-        ConfigureLog = string.Empty;
+        var sb = new System.Text.StringBuilder();
         CurrentConfigureStep = "准备中...";
 
         try
         {
-            ConfigureLog = "[诊断] AutoConfigure 方法已启动\n";
-            CurrentConfigureStep = "正在配置...";
+            sb.AppendLine("[1] AutoConfigure 启动");
+            StatusMessage = "正在配置环境...";
 
             var progress = new Progress<(string Step, string Detail, bool IsError)>(item =>
             {
+                sb.AppendLine($"[{item.Step}] {item.Detail}");
+                if (item.IsError) sb.AppendLine("  ⚠ 错误");
                 CurrentConfigureStep = $"[{item.Step}] {item.Detail}";
-                ConfigureLog = ConfigureLog + $"[{item.Step}] {item.Detail}\n";
-                if (item.IsError)
-                {
-                    ConfigureLog = ConfigureLog + $"  ⚠ 错误\n";
-                }
+                ConfigureLog = sb.ToString();
             });
 
-            ConfigureLog = ConfigureLog + "[诊断] 调用 AutoConfigureEnvironment...\n";
+            sb.AppendLine("[2] 调用 AutoConfigureEnvironment");
+            ConfigureLog = sb.ToString();
 
             var (ok, log) = await _trainingService.AutoConfigureEnvironment(
-                PaddleocrDir,
-                Config.Mode,
-                ConfigureDownloadPretrained,
-                ConfigureInstallDeps,
-                ConfigureInstallPaddle,
-                ConfigurePaddleCpu,
+                PaddleocrDir, Config.Mode,
+                ConfigureDownloadPretrained, ConfigureInstallDeps,
+                ConfigureInstallPaddle, ConfigurePaddleCpu,
                 progress);
 
-            ConfigureLog = log + $"\n[诊断] ok={ok}\n";
+            sb.AppendLine(log);
+            sb.AppendLine($"[结果] ok={ok}");
+            ConfigureLog = sb.ToString();
 
             if (ok)
             {
-                // 自动填充检测到的路径
                 var (det, rec, dict) = _trainingService.GetDetectedPaths(PaddleocrDir);
                 if (Config.Mode == TrainingMode.Detection && det != null)
                     Config.PretrainedModelDir = det;
@@ -226,8 +223,7 @@ public partial class TrainingViewModel : ViewModelBase
 
                 CurrentConfigureStep = "✅ 配置完成";
                 StatusMessage = "环境自动配置完成";
-                MessageBox.Show("环境配置完成！\n\n检测到的路径已自动填入训练参数。",
-                    "配置成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("环境配置完成！", "配置成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
@@ -237,7 +233,9 @@ public partial class TrainingViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ConfigureLog += $"\n[异常] {ex.Message}\n";
+            sb.AppendLine($"[异常] {ex.GetType().Name}: {ex.Message}");
+            sb.AppendLine(ex.StackTrace ?? "");
+            ConfigureLog = sb.ToString();
             CurrentConfigureStep = "❌ 异常";
             StatusMessage = $"配置异常: {ex.Message}";
         }
